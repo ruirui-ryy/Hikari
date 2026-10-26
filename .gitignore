@@ -1,0 +1,12 @@
+.venv/
+data/
+.env
+__pycache__/
+.pytest_cache/
+node_modules/
+.npm-cache/
+.test-data*/
+.preview-data/
+.test-scale/
+tools/
+*.log

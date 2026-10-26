@@ -1,0 +1,74 @@
+# 运行与维护
+
+## 环境与首次启动
+
+当前已准备项目独立 Python 环境。直接运行 `scripts/start.ps1`，首次设置单账户，密码至少 10 位。服务默认只监听 127.0.0.1:18765，由连接工具转发外网请求。
+
+端口可在 `data/config.json` 中通过 `port` 配置，修改后需重启服务与连接程序。启动时会检查端口占用，外网脚本会核对正式 Hikari 健康检查，避免将隧道连接到其他程序。
+
+新机器可在项目目录执行：
+
+```powershell
+python -m venv --without-pip .venv
+python -m pip --python .venv install -r requirements.lock.txt
+.\.venv\Scripts\python.exe -m hikari setup
+.\.venv\Scripts\python.exe -m hikari
+```
+
+启动脚本首次安装依赖要求主机 Python 已有 pip。锁定依赖文件为当前验证的 Windows / Python 3.13 环境。
+
+配置文件：`data/config.json`。运行数据与密钥被 Git 忽略。`HIKARI_DATA` 可在启动前指定另一个独立数据目录。不要启动两个实例使用同一目录；不要删锁文件绕过保护。
+
+## 模型
+
+默认 `https://api.deepseek.com`、`deepseek-flash`。当前官方对应 Flash 1017，服务商可能更新别名对应版本。
+
+密钥优先使用本机配置，没有时读取 `DEEPSEEK_API_KEY`。网页不返回已有密钥；留空保存时保留原配置。连接测试会发送简短合成内容并产生少量用量。
+
+模型请求直接使用 HTTPS；依赖下载工具可使用主机已有代理。若模型必须通过代理访问，需要另行配置并验证，不静默将密钥发送到替代 API 服务。
+
+## 资料与记忆
+
+默认原件位于 `data/knowledge/`，可以放课程子目录。上传后或主机修改文件后，后台每约 15 秒检查更新；首次大批导入期间可在资料库查看状态。
+
+不支持的扩展名不索引；PDF/PPTX 可能缺少图片和公式。单文件默认上限 100 MB；Office 解压内容上限 512 MB。解析错误可通过“检查更新”安排重试。
+
+Agent 不修改原件。网页同名上传会拒绝，请改名，或在主机主动替换已有文件。变更中的原件会使旧来源核验失败；旧回答保留原来读取的文字，不承诺归档完整旧文件。
+
+`data/memory/` 下的 `profile`、`learning`、`understanding` 分别保存偏好、学习记录和资料理解。支持网页或外部编辑器编辑，检测到手工修改会保护整个文件。第一版尚未实现条目级合并；有新证据时由用户处理冲突。
+
+撤销受后续修改保护。撤销新建或清空记忆后保留空的受保护文件，避免 AI 自动重新创建。文件原子替换前会再次比较内容，但外部编辑器不遵守应用锁，仍应避免同一时刻编辑同一文件。
+
+只有要求保存完整笔记、总结或练习时，模型才应使用生成文件工具；相关文件位于 `data/generated/`。自然语言意图由模型判断，程序不保证其判断永远正确。
+
+## 手机外网访问
+
+先启动主机服务，再在另一个 PowerShell 窗口运行：
+
+```powershell
+.\scripts\tunnel.ps1
+```
+
+脚本使用项目内 `tools/cloudflared.exe`；缺失时从 Cloudflare 官方 GitHub 发布下载，校验发布提供的 SHA256。临时网址出现在终端，在 Android 浏览器打开后使用同一个个人账户登录。
+
+临时隧道地址每次重建会变化，无生产可用性保证。固定网址尚待选定服务与域名。主机关机、休眠或连接程序停止后不能远程提问。手机添加到桌面需要浏览器支持；真实 Android 设备的安装和网络仍需用户端验证。
+
+外网入口必须使用 HTTPS。开启设置中的安全 Cookie 后，后续登录只能通过 HTTPS；若要退回本机 HTTP 登录，停服后将 `data/config.json` 的 `secure_cookie` 改为 false。登录有效期 30 天，退出使当前会话失效，重设账户会清除所有会话。
+
+## 备份与恢复
+
+设置中的备份在没有执行/排队任务时创建一致性 SQLite 快照，并打包 Markdown 记忆与生成文件。备份不包含登录会话、原件或含密钥的 config.json。请另外备份资料原件和本机配置。
+
+恢复时先停止服务，将当前数据完整复制到独立备份位置，再恢复 ZIP 中的 `app.sqlite3`、`memory/`、`generated/`，保持原件与配置匹配。不要把旧 SQLite 的 `-wal`、`-shm` 旁文件混入新快照；建议恢复到新建的独立数据目录，再用 `HIKARI_DATA` 指向它启动。首次扫描会检查原件现状。
+
+## 验证
+
+```powershell
+.\scripts\test.ps1
+.\.venv\Scripts\python.exe scripts/smoke_model.py --agent
+.\.venv\Scripts\python.exe scripts/benchmark_index.py
+```
+
+第一项使用模拟模型与合成文件，不发出真实模型请求。第二项明确调用真实模型，仅发送合成课程资料，会产生用量。第三项在 `.test-scale/` 建立 100 份、1 万页合成资料，仅用于规模验证，不代表真实讲义效果。
+
+`scripts/preview_demo.py` 在 8766 端口提供隔离的模拟模型演示，数据位于 `.preview-data/`，不是正式服务。演示账户是测试数据，不能用于公网部署。
