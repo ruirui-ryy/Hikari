@@ -181,6 +181,8 @@ def create_app(home=None, model=None, background=True):
     @app.get('/api/status', dependencies=[Depends(auth)])
     def status():
         task = db.one("SELECT id,chat,status,updated FROM tasks WHERE status NOT IN ('queued','completed','failed','interrupted','cancelled') ORDER BY created LIMIT 1")
+        if not task and agent.active:
+            task = db.one("SELECT id,chat,'remembering' AS status,updated FROM tasks WHERE id=? AND memory_status='reviewing'", (agent.active,))
         queued = db.one("SELECT count(*) AS n FROM tasks WHERE status='queued'")['n']
         return {'agent': task or {'status': 'idle'}, 'queued': queued, 'indexing': library.scanning,
                 'last_scan': library.last_scan, 'index_error': library.error}
@@ -210,6 +212,8 @@ def create_app(home=None, model=None, background=True):
     @app.delete('/api/chats/{cid}', dependencies=[Depends(auth)])
     def delete_chat(cid: str):
         with db.tx() as c:
+            if c.execute("SELECT id FROM tasks WHERE chat=? AND memory_status='reviewing'", (cid,)).fetchone():
+                raise ValueError('聊天正在整理记忆，请稍后再删除')
             if c.execute("SELECT id FROM tasks WHERE chat=? AND status NOT IN ('completed','failed','interrupted','cancelled')", (cid,)).fetchone():
                 raise ValueError('聊天还有待处理任务，请完成或取消后再删除')
             # Evidence snapshots can still be referenced by long-term memories and saved notes.
@@ -251,6 +255,17 @@ def create_app(home=None, model=None, background=True):
         if not row:
             raise ValueError('任务不可重试')
         return enqueue(row['chat'], MessageInput(content=row['prompt'], request_id=uid()))
+
+    @app.post('/api/tasks/{tid}/dismiss', dependencies=[Depends(auth)])
+    def dismiss(tid: str):
+        with db.tx() as c:
+            row = c.execute('SELECT status FROM tasks WHERE id=?', (tid,)).fetchone()
+            if not row:
+                raise HTTPException(404, '任务不存在')
+            if row['status'] not in ('failed', 'interrupted'):
+                raise ValueError('只能关闭失败或中断的任务提示')
+            c.execute('UPDATE tasks SET dismissed=1 WHERE id=?', (tid,))
+        return {'ok': True}
 
     @app.post('/api/tasks/{tid}/cancel', dependencies=[Depends(auth)])
     def cancel(tid: str):

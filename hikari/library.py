@@ -165,8 +165,26 @@ class Library:
     def in_scope(self, path, scope):
         return not scope or path == scope or path.startswith(scope.rstrip('/') + '/')
 
-    def catalog(self, scope=''):
-        return [r for r in self.db.rows('SELECT * FROM documents ORDER BY path') if self.in_scope(r['path'], scope)]
+    def catalog(self, scope='', include_deleted=False):
+        sql = 'SELECT * FROM documents'
+        if not include_deleted:
+            sql += " WHERE status!='deleted'"
+        return [r for r in self.db.rows(sql + ' ORDER BY path') if self.in_scope(r['path'], scope)]
+
+    def purge_deleted(self):
+        """Remove missing originals' index records; retain independent citation snapshots."""
+        removed, skipped = [], []
+        with self.lock, self.db.tx() as c:
+            c.execute('BEGIN IMMEDIATE')
+            for row in c.execute("SELECT id,path FROM documents WHERE status='deleted'").fetchall():
+                path = within(self.root, row['path'])
+                if path.exists():
+                    skipped.append(row['path'])
+                    continue
+                self._clear(c, row['id'])
+                c.execute("DELETE FROM documents WHERE id=? AND status='deleted'", (row['id'],))
+                removed.append(row['path'])
+        return {'removed': removed, 'skipped': skipped}
 
     def search(self, query, scope='', limit=10):
         words = list(dict.fromkeys(tokens(query).split()))[:24]

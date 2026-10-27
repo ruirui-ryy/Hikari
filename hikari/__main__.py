@@ -4,6 +4,21 @@ import sys
 from .core import Config, InstanceLock, password_hash
 
 
+def port_conflict_message(port):
+    import httpx
+    try:
+        with httpx.Client(timeout=2, trust_env=False) as client:
+            response = client.get(f'http://127.0.0.1:{port}/api/health')
+            response.raise_for_status()
+            health = response.json()
+        if health.get('service') == 'hikari' and health.get('demo') is False:
+            return (f'Hikari 已在运行：http://127.0.0.1:{port}，无需重复启动。'
+                    '如需加载代码更新，请在原启动窗口按 Ctrl+C 停止，再重新运行 scripts/start.ps1。')
+    except (httpx.HTTPError, ValueError, AttributeError):
+        pass
+    return f'端口 {port} 已被其他程序占用。请检查占用程序，或在 data/config.json 中修改 port 后重新启动。'
+
+
 def main():
     cfg = Config()
     if len(sys.argv) > 1 and sys.argv[1] == 'setup':
@@ -27,7 +42,7 @@ def main():
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', port))
     except OSError:
-        raise SystemExit(f'端口 {port} 已被其他程序占用。请在 data/config.json 中修改 port，然后重新启动。') from None
+        raise SystemExit(port_conflict_message(port)) from None
     print(f'Hikari: http://127.0.0.1:{port}')
     if not cfg.get('password'):
         print('尚未创建账户，请先运行 python -m hikari setup')

@@ -50,7 +50,7 @@ class Config:
         self.lock = threading.RLock()
         self.values = dict(model='deepseek-flash', base_url='https://api.deepseek.com', api_key='',
                            knowledge=str(self.home / 'knowledge'), max_tools=24, max_seconds=300,
-                           scan_seconds=15, max_upload_mb=100, secure_cookie=False, username='', password='', port=18765)
+                           scan_seconds=15, memory_idle_seconds=120, max_upload_mb=100, secure_cookie=False, username='', password='', port=18765)
         if self.path.exists():
             self.values.update(json.loads(self.path.read_text('utf-8')))
         root = Path(self.values['knowledge']).expanduser().resolve()
@@ -86,7 +86,7 @@ class DB:
               CREATE TABLE IF NOT EXISTS chats(id TEXT PRIMARY KEY,title TEXT,scope TEXT DEFAULT '',created REAL);
               CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,chat TEXT,role TEXT,content TEXT,task TEXT,created REAL);
               CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,chat TEXT,prompt TEXT,status TEXT,error TEXT DEFAULT '',
-                request_id TEXT UNIQUE,created REAL,updated REAL,scope TEXT DEFAULT '');
+                request_id TEXT UNIQUE,created REAL,updated REAL,scope TEXT DEFAULT '',dismissed INTEGER NOT NULL DEFAULT 0);
               CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,expires REAL);
               CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY,path TEXT UNIQUE,version TEXT,status TEXT,
                 warning TEXT DEFAULT '',units INTEGER DEFAULT 0,updated REAL);
@@ -106,6 +106,12 @@ class DB:
             for column in ['before_meta', 'after_meta']:
                 if column not in columns:
                     c.execute(f"ALTER TABLE revisions ADD COLUMN {column} TEXT DEFAULT '{{}}'")
+            task_columns = {r['name'] for r in c.execute('PRAGMA table_info(tasks)')}
+            if 'dismissed' not in task_columns:
+                c.execute('ALTER TABLE tasks ADD COLUMN dismissed INTEGER NOT NULL DEFAULT 0')
+            for column in ['memory_status', 'memory_error']:
+                if column not in task_columns:
+                    c.execute(f"ALTER TABLE tasks ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def tx(self):

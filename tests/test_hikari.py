@@ -95,7 +95,8 @@ def test_index_changes_scope_and_old_evidence(service):
     path.unlink()
     lib.scan()
     assert not lib.search('积分')
-    assert lib.catalog()[0]['status'] == 'deleted'
+    assert lib.catalog() == []
+    assert lib.catalog(include_deleted=True)[0]['status'] == 'deleted'
     assert '保持方向' in client.get('/api/sources/' + evidence['id']).json()['text']
 
 
@@ -330,3 +331,87 @@ def test_scope_filter_is_applied_before_result_limit(service):
     app.state.library.scan()
     hits = app.state.library.search('共同术语与特征向量', '课程10')
     assert hits and all(h['path'] == '课程10/讲义.md' for h in hits)
+
+
+def test_purge_deleted_records_preserves_moved_files_and_history(service):
+    app, client = service
+    original, doc = seed(app, '旧位置.md', '资料中的测试内容')
+    lib = app.state.library
+    evidence = lib.read('old-task', doc['id'], 1)[0]
+    app.state.memory.write('understanding/旧资料.md', '原有理解', 'agent', sources=[{'doc': doc['id'], 'version': doc['version']}])
+    target = original.parent / '课程' / original.name
+    target.parent.mkdir()
+    original.rename(target)
+    lib.scan()
+    assert [r['path'] for r in lib.catalog()] == ['课程/旧位置.md']
+    result = lib.purge_deleted()
+    assert result == {'removed': ['旧位置.md'], 'skipped': []}
+    assert app.state.db.one('SELECT id FROM documents WHERE id=?', (doc['id'],)) is None
+    assert target.read_text('utf-8') == '资料中的测试内容'
+    snapshot = client.get('/api/sources/' + evidence['id']).json()
+    assert snapshot['text'] == '资料中的测试内容' and not snapshot['current']
+    assert app.state.memory.list()[0]['stale']
+    lib.scan()
+    assert len(lib.catalog(include_deleted=True)) == 1
+    assert lib.search('测试内容')
+
+
+def test_purge_skips_deleted_record_whose_original_has_reappeared(service):
+    app, _ = service
+    original, doc = seed(app)
+    original.unlink()
+    app.state.library.scan()
+    original.write_text('用户重新放回的文件', encoding='utf-8')
+    result = app.state.library.purge_deleted()
+    assert result == {'removed': [], 'skipped': [doc['path']]}
+    assert original.read_text('utf-8') == '用户重新放回的文件'
+    assert app.state.db.one('SELECT id FROM documents WHERE id=?', (doc['id'],))
+
+
+@pytest.mark.parametrize('status', ['failed', 'interrupted'])
+def test_dismiss_task_is_persistent_and_preserves_messages(service, status):
+    app, client = service
+    cid, tid = chat(client)
+    app.state.db.execute('UPDATE tasks SET status=?,error=? WHERE id=?', (status, '测试失败原因', tid))
+    assert client.post('/api/tasks/' + tid + '/dismiss').status_code == 200
+    assert client.post('/api/tasks/' + tid + '/dismiss').status_code == 200
+    record = client.get('/api/chats/' + cid).json()
+    assert record['tasks'][0]['dismissed'] == 1
+    assert record['tasks'][0]['status'] == status
+    assert record['tasks'][0]['error'] == '测试失败原因'
+    assert len(record['messages']) == 1
+    reopened = DB(app.state.db.path)
+    assert reopened.one('SELECT dismissed FROM tasks WHERE id=?', (tid,))['dismissed'] == 1
+
+
+@pytest.mark.parametrize('status', ['queued', 'thinking', 'completed', 'cancelled'])
+def test_dismiss_does_not_change_other_task_states(service, status):
+    app, client = service
+    _, tid = chat(client)
+    app.state.db.execute('UPDATE tasks SET status=? WHERE id=?', (status, tid))
+    assert client.post('/api/tasks/' + tid + '/dismiss').status_code == 409
+    row = app.state.db.one('SELECT status,dismissed FROM tasks WHERE id=?', (tid,))
+    assert row == {'status': status, 'dismissed': 0}
+
+
+def test_dismiss_requires_login_and_existing_task(service):
+    app, client = service
+    _, tid = chat(client)
+    app.state.db.execute("UPDATE tasks SET status='failed' WHERE id=?", (tid,))
+    assert client.post('/api/tasks/missing/dismiss').status_code == 404
+    client.cookies.clear()
+    assert client.post('/api/tasks/' + tid + '/dismiss').status_code == 401
+    assert app.state.db.one('SELECT dismissed FROM tasks WHERE id=?', (tid,))['dismissed'] == 0
+
+
+def test_old_tasks_table_migrates_without_losing_history(tmp_path):
+    import sqlite3
+    from contextlib import closing
+    path = tmp_path / 'old.sqlite3'
+    with closing(sqlite3.connect(path)) as c:
+        c.execute("CREATE TABLE tasks(id TEXT PRIMARY KEY,chat TEXT,prompt TEXT,status TEXT,error TEXT DEFAULT '',request_id TEXT UNIQUE,created REAL,updated REAL,scope TEXT DEFAULT '')")
+        c.execute("INSERT INTO tasks(id,chat,prompt,status,error) VALUES('old','chat','旧问题','failed','旧错误')")
+        c.commit()
+    db = DB(path)
+    assert db.one("SELECT prompt,status,error,dismissed FROM tasks WHERE id='old'") == {
+        'prompt': '旧问题', 'status': 'failed', 'error': '旧错误', 'dismissed': 0}

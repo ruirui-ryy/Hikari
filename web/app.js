@@ -51,9 +51,18 @@ async function loadChat(){
   const atBottom=window.innerHeight+window.scrollY>=document.body.scrollHeight-160;
   $('#messages').innerHTML=c.messages.length?c.messages.map(m=>`<article class="message ${esc(m.role)}"><div class="role">${m.role==='user'?'我':'✳'}</div><div class="body"><div class="role-label">${m.role==='user'?'你':'Hikari'}</div><div class="${m.role==='user'?'body-text':'markdown'}">${m.role==='user'?esc(m.content):markdown(m.content)}</div></div></article>`).join(''):welcome();
   math($('#messages'));bindWelcome();
-  $('#task-list').innerHTML=c.tasks.filter(t=>!['completed','cancelled'].includes(t.status)).map(t=>`<div class="task ${['failed','interrupted'].includes(t.status)?'error':''}"><span>${esc(statuses[t.status]||t.status)}${t.error?' · '+esc(t.error):' · '+esc(t.prompt.slice(0,40))}</span>${t.status==='queued'?`<button class="quiet" data-cancel="${t.id}">取消</button>`:''}${['failed','interrupted'].includes(t.status)?`<button class="quiet" data-retry="${t.id}">重试</button>`:''}</div>`).join('');
+  const visibleTasks=c.tasks.filter(t=>!t.dismissed&&!['completed','cancelled'].includes(t.status));
+  $('#task-list').innerHTML=visibleTasks.map(t=>{
+    const failed=['failed','interrupted'].includes(t.status);
+    return `<div class="task ${failed?'error':''}"><span>${esc(statuses[t.status]||t.status)}${t.error?' · '+esc(t.error):' · '+esc(t.prompt.slice(0,40))}</span><div class="task-actions">${t.status==='queued'?`<button class="quiet" data-cancel="${t.id}">取消</button>`:''}${failed?`<button class="quiet" data-retry="${t.id}">重试</button><button class="task-dismiss" data-dismiss="${t.id}" aria-label="关闭任务提示" title="关闭提示，保留聊天内容">×</button>`:''}</div></div>`;
+  }).join('');
   $$('[data-cancel]').forEach(b=>b.onclick=async()=>{try{await api('/tasks/'+b.dataset.cancel+'/cancel',{method:'POST'});await loadChat()}catch(e){toast(e.message)}});
   $$('[data-retry]').forEach(b=>b.onclick=async()=>{try{await api('/tasks/'+b.dataset.retry+'/retry',{method:'POST'});await loadChat()}catch(e){toast(e.message)}});
+  $$('[data-dismiss]').forEach(b=>b.onclick=async()=>{
+    b.disabled=true;
+    try{await api('/tasks/'+b.dataset.dismiss+'/dismiss',{method:'POST'});await loadChat()}
+    catch(e){b.disabled=false;toast(e.message)}
+  });
   if(atBottom&&c.messages.length)window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
 }
 function bindWelcome(){$$('[data-suggest]').forEach(b=>b.onclick=()=>{$('#prompt').value=b.dataset.suggest;$('#prompt').focus()});if($('#welcome-chats'))$('#welcome-chats').onclick=chatPicker}

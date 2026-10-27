@@ -14,6 +14,82 @@ class Memory:
         self.root = cfg.home / 'memory'
         self.lock = threading.RLock()
 
+    def context(self, query, budget=16000):
+        """Prefer relevant personal memories over an arbitrary alphabetical prefix."""
+        terms = set(re.findall(r'[a-z0-9_]+|[\u4e00-\u9fff]{2}', query.lower()))
+        rows = self.list()
+        def score(row):
+            text = (row['path'] + '\n' + (row['content'] or '')).lower()
+            return (sum(term in text for term in terms),
+                    row['path'].startswith(('profile/', 'learning/')), row['updated'])
+        result = []
+        for row in sorted(rows, key=score, reverse=True):
+            item = {k: row[k] for k in ['path', 'protected', 'stale']}
+            item['content'] = (row['content'] or '')[:4000]
+            size = len(json.dumps(item, ensure_ascii=False))
+            if size <= budget:
+                result.append(item)
+                budget -= size
+        return result
+
+    def apply_personal(self, updates, snapshot, prompt, tid):
+        """Validate the whole proposal first; write through the existing revision journal.
+
+        Stable keys let the model merge paraphrases and replace corrected facts. Only
+        the two generated files are writable here; all other notes are dedup context.
+        """
+        if not isinstance(updates, list) or len(updates) > 12:
+            raise ValueError('自动记忆更新列表无效')
+        paths = {'profile/自动记忆.md', 'learning/自动记忆.md'}
+        kinds = {'用户事实', '用户反馈', '助手推测'}
+        old = {m['path']: m for m in snapshot}
+        grouped = {}
+        for item in updates:
+            if not isinstance(item, dict) or set(item) != {'path', 'key', 'kind', 'text', 'quote'}:
+                raise ValueError('自动记忆条目字段无效')
+            if any(not isinstance(v, str) for v in item.values()):
+                raise ValueError('自动记忆条目必须为文本')
+            path, key, kind, text, quote = (item[k] for k in ['path', 'key', 'kind', 'text', 'quote'])
+            if path not in paths or kind not in kinds or not re.fullmatch(r'[\w\-\u4e00-\u9fff]{1,60}', key):
+                raise ValueError('自动记忆路径、类别或主题键无效')
+            turns = prompt if isinstance(prompt, dict) else {tid: prompt}
+            source_task = next((source for source, message in turns.items() if quote in message), None)
+            if not text.strip() or len(text) > 600 or not quote.strip() or len(quote) > 600 or not source_task:
+                raise ValueError('自动记忆必须附本轮用户原话，且长度有效')
+            if any(c in text + quote for c in '\r\n'):
+                raise ValueError('自动记忆条目不能跨行')
+            if self.cfg.get('api_key') and self.cfg.get('api_key') in text + quote:
+                raise ValueError('自动记忆包含服务密钥')
+            grouped.setdefault(path, []).append(item | {'source_task': source_task})
+        plans = []
+        for path, items in grouped.items():
+            previous = old.get(path)
+            if previous and previous['protected']:
+                raise ValueError('自动记忆文件受用户保护，未覆盖')
+            before = (previous or {}).get('content') or ''
+            lines = before.splitlines()
+            for item in items:
+                prefix = '- [' + item['key'] + '] '
+                value = prefix + item['kind'] + '：' + item['text']
+                matches = [i for i, line in enumerate(lines) if line.startswith(prefix)]
+                if len(matches) > 1:
+                    raise ValueError('自动记忆主题重复，需人工检查')
+                if matches and lines[matches[0]].split('（依据：', 1)[0] == value:
+                    continue
+                line = value + '（依据：用户原话「' + item['quote'] + '」；轮次：' + item['source_task'] + '）'
+                if matches:
+                    lines[matches[0]] = line
+                else:
+                    lines.append(line)
+            after = '\n'.join(lines) + '\n'
+            if after != before:
+                plans.append((path, after, (previous or {}).get('hash')))
+        changed = 0
+        for path, content, expected in plans:
+            self.write(path, content, 'agent', expected)
+            changed += 1
+        return changed
+
     def reconcile(self):
         with self.lock:
             for revision in self.db.rows("SELECT r.*,m.path FROM revisions r JOIN memories m ON r.memory=m.id WHERE r.state='pending'"):
