@@ -43,15 +43,37 @@ Agent 不修改原件。网页同名上传会拒绝，请改名，或在主机�
 
 ## 手机外网访问
 
+### 推荐：Tailscale 固定私网入口
+
+适用于手机与主机都已经连接同一个 Tailscale 网络的个人使用场景。先运行 `scripts/start.ps1` 启动助手，再在另一个 PowerShell 窗口运行一次：
+
+```powershell
+.\scripts\tailscale.ps1
+```
+
+脚本核对正式助手和现有转发，使用 `tailscale serve --bg --https=443` 转发到配置中的本机端口。遇到其他服务占用同一入口时拒绝覆盖，不启用公网 Funnel。
+
+首次使用需由网络管理员在 Tailscale 的 DNS 设置中启用 HTTPS Certificates，MagicDNS 也必须开启。这不是 Services 页面里的“定义服务”，无需创建服务名称或 ACL 标签。证书的设备域名会进入公开证书记录，但网页访问仍受 Tailscale 网络权限限制。
+
+入口格式为 `https://设备名.网络名.ts.net`。设备名、网络名保持不变时，重启后的网址仍相同。`--bg` 转发由 Tailscale 持久保存，重启 Tailscale 后会恢复；Hikari 本身仍需运行 `scripts/start.ps1` 启动，并保持主机开机、两端 Tailscale 在线。
+
+首次访问新域名时重新使用 Hikari 个人账户登录。手机浏览器可将此地址添加到桌面。不需要运行 `tunnel.ps1`。
+
+原来的 `scripts/tunnel.ps1` 现在也默认调用 Tailscale 方案，避免沿用旧命令时重新创建临时公网入口。
+
+如需关闭此入口，在确认 443 仍仅用于本项目后执行 `tailscale serve --https=443 off`；不要用全局 reset 清除其他服务配置。
+
+### 可选：Cloudflare 临时公网入口
+
 先启动主机服务，再在另一个 PowerShell 窗口运行：
 
 ```powershell
-.\scripts\tunnel.ps1
+.\scripts\tunnel.ps1 -Cloudflare
 ```
 
 脚本使用项目内 `tools/cloudflared.exe`；缺失时从 Cloudflare 官方 GitHub 发布下载，校验发布提供的 SHA256。临时网址出现在终端，在 Android 浏览器打开后使用同一个个人账户登录。
 
-临时隧道地址每次重建会变化，无生产可用性保证。固定网址尚待选定服务与域名。主机关机、休眠或连接程序停止后不能远程提问。手机添加到桌面需要浏览器支持；真实 Android 设备的安装和网络仍需用户端验证。
+临时隧道地址每次重建会变化，无生产可用性保证；不用于 Tailscale 固定入口。主机关机、休眠或连接程序停止后不能远程提问。手机添加到桌面需要浏览器支持；真实 Android 设备的安装和网络仍需用户端验证。
 
 外网入口必须使用 HTTPS。开启设置中的安全 Cookie 后，后续登录只能通过 HTTPS；若要退回本机 HTTP 登录，停服后将 `data/config.json` 的 `secure_cookie` 改为 false。登录有效期 30 天，退出使当前会话失效，重设账户会清除所有会话。
 

@@ -1,4 +1,9 @@
-﻿$ErrorActionPreference = 'Stop'
+﻿param([switch]$Cloudflare)
+$ErrorActionPreference = 'Stop'
+if (-not $Cloudflare) {
+    & (Join-Path $PSScriptRoot 'tailscale.ps1')
+    exit $LASTEXITCODE
+}
 Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 $taskPort = & .\.venv\Scripts\python.exe scripts/check_service.py
 if ($LASTEXITCODE -ne 0) { throw '请先启动正式助手服务，再建立外网连接。' }
