@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Hikari · PDF 阅读</title><link rel="stylesheet" href="/static/pdf.css?v=1"><script type="module" src="/static/pdf.js?v=1"></script></head>
+<body><header><a href="/" id="back">‹ 返回对话</a><h1 id="title">PDF 阅读</h1><a id="download" hidden download>下载原件</a></header>
+<nav aria-label="阅读控制"><button id="prev" disabled aria-label="上一页">‹</button><label>第 <input id="page" type="number" min="1" value="1" aria-label="页码" disabled> / <span id="total">—</span> 页</label><button id="next" disabled aria-label="下一页">›</button><span class="divider"></span><button id="out" disabled aria-label="缩小">−</button><button id="fit" disabled>适合宽度</button><button id="in" disabled aria-label="放大">＋</button></nav>
+<p id="status" role="status" aria-live="polite">正在读取 PDF…</p><main id="stage" aria-label="PDF 原文"><canvas id="canvas" hidden aria-label="PDF 页面图像"></canvas></main>
+<p class="hint">支持翻页、输入页码和缩放。页码以 PDF 实际页序为准。</p></body></html>

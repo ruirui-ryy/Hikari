@@ -1,1 +1,1 @@
-{"name":"hikari-web-assets","private":true,"description":"Offline browser assets; no Node server is required at runtime","scripts":{"vendor":"node scripts/vendor.mjs"},"devDependencies":{"dompurify":"3.4.17","katex":"0.19.1","marked":"18.1.2"}}
+{"name":"hikari-web-assets","private":true,"description":"Offline browser assets; no Node server is required at runtime","scripts":{"vendor":"node scripts/vendor.mjs"},"devDependencies":{"dompurify":"3.4.17","katex":"0.19.1","marked":"18.1.2","pdfjs-dist":"6.4.299"}}

@@ -60,6 +60,7 @@ def create_app(home=None, model=None, background=True):
     # Windows registry may map .js to text/plain; nosniff then blocks every script.
     mimetypes.init()
     mimetypes.add_type('application/javascript', '.js')
+    mimetypes.add_type('application/javascript', '.mjs')
     mimetypes.add_type('text/css', '.css')
     cfg = Config(home)
     db = DB(cfg.home / 'app.sqlite3')
