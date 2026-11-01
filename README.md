@@ -34,6 +34,7 @@
 扫描页、图片与图中公式暂不识别。支持 Tailscale Serve 固定私网地址；真实课程质量与 Android 真机体验仍需相应验收。
 
 - [第一版需求](docs/REQUIREMENTS.md)
+- [邮件回复功能需求（已确认，尚未实施）](docs/EMAIL_REQUIREMENTS.md)
 - [架构设计](docs/ARCHITECTURE.md)
 - [技术核查与验收计划](docs/VALIDATION.md)
 - [运行、外网连接与恢复](docs/RUNNING.md)
