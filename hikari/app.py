@@ -469,7 +469,7 @@ def create_app(home=None, model=None, background=True):
     @app.get('/api/backups/{filename}', dependencies=[Depends(auth)])
     def backup_file(filename: str):
         path = within(cfg.home / 'backups', filename)
-        if not path.is_file() or path.suffix != '.zip':
+        if not path.is_file() or path.suffix not in {'.zip', '.sqlite3'}:
             raise HTTPException(404, '备份不存在')
         return FileResponse(path, filename=filename)
 
@@ -477,13 +477,13 @@ def create_app(home=None, model=None, background=True):
     def backup_list():
         return {'notice': '备份可能包含邮件正文、附件和草稿；本地邮件清理不会删除旧备份。',
                 'files': [{'filename': p.name, 'size': p.stat().st_size, 'created': p.stat().st_mtime}
-                          for p in sorted((cfg.home / 'backups').glob('*.zip'), reverse=True) if p.is_file()]}
+                          for p in sorted((cfg.home / 'backups').glob('*'), reverse=True) if p.is_file() and p.suffix in {'.zip', '.sqlite3'}]}
 
     @app.delete('/api/backups/{filename}', dependencies=[Depends(auth)])
     def delete_backup(filename: str):
         with mail.sync_lock, mail.lock:
             path = within(cfg.home / 'backups', filename)
-            if not path.is_file() or path.suffix != '.zip':
+            if not path.is_file() or path.suffix not in {'.zip', '.sqlite3'}:
                 raise HTTPException(404, '备份不存在')
             path.unlink()
         return {'ok': True}

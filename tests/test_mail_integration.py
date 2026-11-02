@@ -318,7 +318,13 @@ def test_backup_management_deletes_only_selected_backup(service):
     data = c.get('/api/backups').json()
     assert data['files'][0]['filename'] == filename
     assert '邮件' in data['notice']
+    snapshot = app.state.cfg.home / 'backups' / 'before-library-cleanup-example.sqlite3'
+    snapshot.write_bytes(b'dummy database snapshot')
+    assert len(c.get('/api/backups').json()['files']) == 2
+    assert c.get('/api/backups/' + snapshot.name).content == b'dummy database snapshot'
     assert c.delete('/api/backups/' + filename).status_code == 200
+    assert snapshot.exists()
+    assert c.delete('/api/backups/' + snapshot.name).status_code == 200
     assert c.get('/api/backups').json()['files'] == []
     assert (app.state.cfg.home / 'app.sqlite3').exists()
 
