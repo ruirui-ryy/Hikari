@@ -1,6 +1,7 @@
 'use strict';
 const mailLabels={needs_review:'新来信 · 有手工草稿待复核',new:'待分类',history:'历史背景',requested:'已请求拟稿',processed:'已处理',draft:'已拟稿 · 待确认',incomplete:'待补充',possible:'可能需要回复',no_reply:'无需回复',external_reply:'已在其他地方回复',superseded:'已被后续来信取代',review:'需要复核',unknown:'发送结果待核实',submitting:'正在提交',sent:'已发送（服务器已接受或经核实）',discarded:'这封不用回复 / 已丢弃',excluded:'排除规则生效',cleaned:'已清理',source_deleted:'源邮件已删除',processing:'正在分类拟稿',failed:'明确未发出',risk_released:'已由用户承担重复风险'};
 let mailData=null,mailDetail=null,mailDirty=false,mailBusy=false;
+let mailSubmittedUpdate=null,mailEditGeneration=0,mailOpenGeneration=0;
 const mailPending=new Set(['draft','incomplete','possible','review','unknown','submitting','processing','new','needs_review','requested']);
 async function loadEmail(){
   const data=await api('/email');mailData=data;
@@ -11,9 +12,17 @@ async function loadEmail(){
   $('#email-list').innerHTML=rows.map((m,i)=>`<article class="document"><div class="info"><button class="quiet" data-mail-index="${i}">${esc(m.subject)}</button><small>${esc(m.sender||'内容已清理')} · ${date(m.received)}</small><span class="badge">${esc(mailLabels[m.draft_state||m.state]||m.state)}</span>${m.deleted?'<span class="badge warn">源邮件已删除</span>':''}${m.error?`<p class="warning">${esc(m.error)}</p>`:''}</div></article>`).join('')||'<p class="empty">暂无此类邮件。历史与无需回复邮件可在“全部邮件”中查看。</p>';
   $$('[data-mail-index]').forEach(b=>b.onclick=()=>openMail(rows[Number(b.dataset.mailIndex)].id).catch(e=>toast(e.message)));
   if(mailDetail){
-    // Polling warns about stale editors without replacing unsaved text.
+    const displayed=mailDetail;
     const row=data.messages.find(m=>m.id===mailDetail.message.id);
-    if(row&&(row.version!==mailDetail.draft?.version||row.draft_state!==mailDetail.draft?.state)){$('#mail-version-notice').textContent='主机上的草稿或线程状态有变化，请重新打开最新版本。';$('#mail-confirm')?.setAttribute('disabled','');}
+    if(await refreshSubmittedMail(row))return;
+    if(mailDetail!==displayed)return;
+    if(mailSubmittedUpdate?.mid===mailDetail.message.id&&row?.version<=mailSubmittedUpdate.version&&!row.error&&!mailDirty){
+      $('#mail-version-notice').textContent='要求已提交，正在等待 AI 更新正文和待补充问题，完成后会自动显示。';
+      $('#mail-confirm')?.setAttribute('disabled','');
+    }else if(row&&(row.version!==mailDetail.draft?.version||row.draft_state!==mailDetail.draft?.state)){
+      $('#mail-version-notice').textContent=mailDirty?'草稿已有更新；你的未保存修改仍保留，请核对后再打开最新版本。':'主机上的草稿或线程状态有变化，请重新打开最新版本。';
+      $('#mail-confirm')?.setAttribute('disabled','');
+    }
   }
 }
 $('#email-filter').onchange=()=>loadEmail().catch(e=>toast(e.message));
@@ -41,26 +50,72 @@ function mailPayload(){
   const f=$('#mail-editor').elements;
   return {to:f.to.value.split(/[,;\n]/).map(s=>s.trim()).filter(Boolean),cc:f.cc.value.split(/[,;\n]/).map(s=>s.trim()).filter(Boolean),subject:f.subject.value,body:f.body.value,questions:f.questions.value.split('\n').map(s=>s.trim()).filter(Boolean),attachments:[...mailDetail.draft.payload.attachments||[]]};
 }
-function markMailDirty(){mailDirty=true;$('#mail-confirm')?.setAttribute('disabled','');$('#mail-version-notice').textContent='有未保存修改，保存并核对最终内容后才能发送。';}
+function markMailDirty(){mailEditGeneration++;mailDirty=true;$('#mail-confirm')?.setAttribute('disabled','');$('#mail-version-notice').textContent='有未保存修改，保存并核对最终内容后才能发送。';}
 async function openMail(mid,force=false){
   if(!force&&mailDirty&&!confirm('放弃当前未保存修改并打开邮件？'))return;
-  const d=await api('/email/message?'+new URLSearchParams({mid}));mailDetail=d;mailDirty=false;
+  const generation=++mailOpenGeneration,editGeneration=mailEditGeneration;
+  const d=await api('/email/message?'+new URLSearchParams({mid}));
+  if(generation!==mailOpenGeneration)return false;
+  if(editGeneration!==mailEditGeneration){toast('读取期间有新修改，已保留当前输入，请保存后再打开最新版本');return false;}
+  if(mailSubmittedUpdate?.mid!==mid)mailSubmittedUpdate=null;
+  renderMail(d);
+  return true;
+}
+async function refreshSubmittedMail(row){
+  const pending=mailSubmittedUpdate,previous=mailDetail,editGeneration=mailEditGeneration,openGeneration=mailOpenGeneration;
+  if(!pending||!row||pending.mid!==previous?.message.id||row.version<pending.version)return false;
+  if(row.version===pending.version&&!row.error)return false;
+  if(mailDirty||mailBusy||$('#mail-instruction')?.value.trim())return false;
+  const latest=await api('/email/message?'+new URLSearchParams({mid:pending.mid}));
+  // An edit, navigation or newer request may happen while the response is in flight.
+  if(mailSubmittedUpdate!==pending||mailDetail!==previous||mailDirty||mailBusy||mailEditGeneration!==editGeneration||mailOpenGeneration!==openGeneration||state.view!=='email'||$('#mail-instruction')?.value.trim())return false;
+  const dr=latest.draft;
+  const sameRequest=dr?.id===pending.draft&&dr.instruction===pending.instruction&&latest.thread_version===pending.threadVersion;
+  const completed=sameRequest&&dr.version===pending.version+1&&!dr.manual&&['draft','incomplete','possible','no_reply'].includes(dr.state);
+  const failed=sameRequest&&dr.version===pending.version&&dr.state==='possible'&&dr.error;
+  if(completed||failed){
+    mailSubmittedUpdate=null;
+    renderMail(latest);
+    toast(completed?'草稿已按要求更新，请核对新正文和待补充问题':dr.error);
+    return true;
+  }
+  if(!sameRequest||dr?.version>pending.version||['external_reply','superseded','review','cleaned','source_deleted','sent'].includes(dr?.state))mailSubmittedUpdate=null;
+  return false;
+}
+function renderMail(d){
+  mailDetail=d;mailDirty=false;
+  const mid=d.message.id;
   const m=d.message,p=m.payload,dr=d.draft,dp=dr?.payload||{};
   const editable=dr&&!['superseded','external_reply'].includes(m.state)&&!['submitting','unknown','sent','cleaned','external_reply','superseded','source_deleted'].includes(dr.state);
   $('#email-inbox').classList.add('hidden');$('#email-detail').classList.remove('hidden');
   $('#email-detail').innerHTML=`<div class="mail-actions"><button id="mail-back" class="secondary">← 邮件列表</button><button id="mail-reload" class="quiet">重新打开最新版本</button></div><h2>${esc(p.subject||'已清理的邮件')}</h2><p>${esc(m.sender)} · ${date(m.received)} · ${esc(mailLabels[dr?.state||m.state]||m.state)}</p>${m.deleted?'<p class="warning">源邮件已删除，停止自动处理。</p>':''}<details open><summary>来信原文</summary><pre class="mail-body">${esc(p.body||'正文已清理或不可用')}</pre>${(p.attachments||[]).map(a=>`<p>${a.file?`<a href="/api/email/attachments/${esc(a.id)}" download>${esc(a.name)}</a>`:esc(a.name)} ${esc(a.warning||'已提取文字')}</p><details><summary>提取文字</summary><pre>${esc(a.text)}</pre></details>`).join('')}</details><div class="mail-actions">${m.cleaned?'<button id="mail-restore" class="secondary">主动重新获取这封邮件</button>':''}<button id="mail-history" class="quiet">补取更早的关联邮件</button><button id="mail-request" class="secondary">请求 AI 拟稿 / 更新</button><button id="mail-discard" class="quiet">这封不用回 / 丢弃草稿</button><button id="mail-exclude" class="quiet">以后不自动回 ${esc(m.sender)}</button></div><label>对这封邮件的要求<input id="mail-instruction" maxlength="16000" placeholder="例如：改得简短些；以后不用回这个地址"></label><button id="mail-instruct" class="secondary">提交要求</button><p id="mail-version-notice" class="notice" role="status">${dr?`当前保存版本 ${dr.version}。所有修改保存后，完整核对下方内容，再确认发送。`:'AI 在空闲时处理，你也可以主动请求拟稿。'}</p>${dr?.error?`<p class="warning">${esc(dr.error)}</p>`:''}${dr&&!m.cleaned?`<form id="mail-editor" class="settings-card"><h3>最终回复 · 版本 ${dr.version}</h3><fieldset ${editable?'':'disabled'}><label>收件人（逗号分隔）<input name="to" value="${esc((dp.to||[]).join(', '))}" required></label><div class="mail-actions"><button id="mail-reply-all" type="button" class="quiet">明确选择回复全部</button></div><label>抄送（逗号分隔）<input name="cc" value="${esc((dp.cc||[]).join(', '))}"></label><label>主题<input name="subject" value="${esc(dp.subject||'')}" maxlength="998"></label><label>正文（纯文本）<textarea name="body" rows="14">${esc(dp.body||'')}</textarea></label><label>待补充问题（每行一条；补齐正文后，删除已解决的问题）<textarea name="questions" rows="3">${esc((dp.questions||[]).join('\n'))}</textarea></label><h4>发送附件</h4><p class="muted">来信附件不会自动附回。仅发送下面明确添加的附件。</p><div id="mail-outgoing">${(dp.attachments||[]).map(a=>`<p><a href="/api/email/attachments/${esc(a)}" download>${esc(dr.attachment_names[a]||a)}</a> <button data-remove-attachment="${esc(a)}" type="button" class="quiet">移除</button></p>`).join('')||'<p>无发送附件</p>'}</div><input id="mail-upload" type="file" aria-label="添加发送附件"><p id="mail-upload-status" class="muted"></p><div class="actions"><button class="primary">保存全部修改</button><button id="mail-confirm" type="button" class="primary" ${dr.state==='draft'&&!(dp.questions||[]).length&&dp.body?.trim()?'':'disabled'}>确认并发送此版本</button></div></fieldset><p class="notice">确认仅适用于上述完整保存版本；不会追加确认弹窗。服务器接受发送不代表对方收到或已读。</p></form>`:''}<div id="mail-send-records">${d.sends.map(s=>`<div class="settings-card"><p>版本 ${s.version} · ${esc(mailLabels[s.state]||s.state)} · ${date(s.created)}</p><p>${esc(s.error)}</p>${s.state==='unknown'?`<p class="warning">未自动重发。已发送文件夹暂时没有找到邮件，也不能认定发送失败。</p><button data-resolve-sent="${s.id}" class="secondary">我已检查邮箱，确认此封已发送</button><button data-resolve-risk="${s.id}" class="quiet">我承担重复发送风险，重新准备确认</button>`:''}</div>`).join('')}</div><details><summary>实际参考邮件 / 同线程往来</summary>${[...new Map([...d.history,...d.references||[]].map(h=>[h.id,h])).values()].map(h=>`<article><h4>${esc(h.payload.subject||'已清理')} · ${date(h.received)}</h4><p>${esc(h.sender)} · ${esc(h.id)}</p><pre>${esc(h.payload.body||'正文已清理')}</pre></article>`).join('')}<p>AI 实际参考标识：${esc((dp.references||[]).join('、')||'尚无模型参考记录')}</p></details><details><summary>草稿旧版本</summary>${d.versions.map(v=>`<details><summary>版本 ${v.version} · ${date(v.created)}</summary><pre>${esc(v.payload)}</pre></details>`).join('')||'<p>暂无旧版本</p>'}</details>`;
-  $('#mail-back').onclick=async()=>{if(mailDirty&&!confirm('放弃未保存修改并返回？'))return;mailDirty=false;mailDetail=null;$('#email-detail').classList.add('hidden');$('#email-inbox').classList.remove('hidden');await loadEmail()};
+  $('#mail-back').onclick=async()=>{if(mailDirty&&!confirm('放弃未保存修改并返回？'))return;mailOpenGeneration++;mailSubmittedUpdate=null;mailDirty=false;mailDetail=null;$('#email-detail').classList.add('hidden');$('#email-inbox').classList.remove('hidden');await loadEmail()};
   $('#mail-reload').onclick=()=>openMail(mid).catch(e=>toast(e.message));
-  const act=async(path,body={mid})=>{try{await mailAction(path,body);await openMail(mid,true)}catch(e){toast(e.message)}};
+  const act=async(path,body={mid})=>{
+    if(mailBusy){toast('正在处理，请稍候');return;}
+    const previous=mailDetail,editGeneration=mailEditGeneration,openGeneration=mailOpenGeneration;
+    mailBusy=true;
+    try{
+      const result=await api('/email/'+path,{method:'POST',body});
+      if(path==='draft'&&result.draft&&(result.draft.requested||result.draft.state==='processing')){
+        mailSubmittedUpdate={mid,draft:result.draft.id,version:result.draft.version,instruction:result.draft.instruction,threadVersion:result.thread_version};
+      }else mailSubmittedUpdate=null;
+      if(mailDetail===previous&&mailEditGeneration===editGeneration&&mailOpenGeneration===openGeneration&&(!mailDirty||path!=='draft')){
+        if(path==='draft')renderMail(result);else await openMail(mid,true);
+      }
+      if(path==='draft')toast(mailSubmittedUpdate?'要求已提交，完成后会自动显示新草稿':'草稿已更新，请核对内容');
+      await loadEmail();
+    }catch(e){toast(e.message)}finally{mailBusy=false}
+  };
   if($('#mail-restore'))$('#mail-restore').onclick=()=>act('restore');
   $('#mail-history').onclick=()=>act('history');
-  $('#mail-request').onclick=()=>{if(mailDirty){toast('请先保存修改');return}if(dr?.manual&&!confirm('允许 AI 基于当前手工草稿更新？旧版本将保留。'))return;act('draft',{mid,instruction:$('#mail-instruction').value})};
+  $('#mail-request').onclick=()=>{if(mailDirty){toast('请先保存修改');return}if(dr?.manual&&!confirm('允许 AI 基于当前手工草稿更新？旧版本将保留。'))return;return act('draft',{mid,instruction:$('#mail-instruction').value})};
   $('#mail-discard').onclick=()=>act('discard');
   $('#mail-exclude').onclick=()=>excludeSender('以后不用回这个地址').catch(e=>toast(e.message));
-  $('#mail-instruct').onclick=()=>{const text=$('#mail-instruction').value.trim();if(/^(以后不用回|以后不回复)(这个人|这个地址|这个发件人)[。！!]?$/u.test(text)){excludeSender(text).catch(e=>toast(e.message));return}if(mailDirty){toast('请先保存修改');return}act('draft',{mid,instruction:text})};
+  $('#mail-instruct').onclick=()=>{const text=$('#mail-instruction').value.trim();if(/^(以后不用回|以后不回复)(这个人|这个地址|这个发件人)[。！!]?$/u.test(text)){excludeSender(text).catch(e=>toast(e.message));return}if(mailDirty){toast('请先保存修改');return}return act('draft',{mid,instruction:text})};
   if($('#mail-editor')){
     $('#mail-editor').oninput=markMailDirty;
-    $('#mail-editor').onsubmit=async e=>{e.preventDefault();if(mailBusy)return;mailBusy=true;try{await api('/email/draft',{method:'PUT',body:{mid,version:dr.version,thread_version:d.thread_version,payload:mailPayload()}});await openMail(mid,true);toast('完整版本已保存，请核对后确认发送')}catch(e){toast(e.message)}finally{mailBusy=false}};
+    $('#mail-editor').onsubmit=async e=>{e.preventDefault();if(mailBusy)return;mailBusy=true;try{await api('/email/draft',{method:'PUT',body:{mid,version:dr.version,thread_version:d.thread_version,payload:mailPayload()}});mailSubmittedUpdate=null;await openMail(mid,true);toast('完整版本已保存，请核对后确认发送')}catch(e){toast(e.message)}finally{mailBusy=false}};
     $('#mail-confirm').onclick=async()=>{if(mailDirty||mailBusy)return;mailBusy=true;$('#mail-confirm').disabled=true;try{const result=await mailAction('send',{mid,version:dr.version,thread_version:d.thread_version,request_id:dr.id+':'+dr.version});toast(mailLabels[result.state]||result.state);await openMail(mid,true)}catch(e){toast(e.message);await openMail(mid,true).catch(()=>{})}finally{mailBusy=false}};
     $('#mail-reply-all').onclick=()=>{const f=$('#mail-editor').elements;f.to.value=[...new Set([m.sender,...p.to||[]])].join(', ');f.cc.value=(p.cc||[]).join(', ');markMailDirty()};
     $$('[data-remove-attachment]').forEach(b=>b.onclick=()=>{dp.attachments=dp.attachments.filter(a=>a!==b.dataset.removeAttachment);b.closest('p').remove();markMailDirty()});

@@ -14,8 +14,11 @@ from hikari.mail import packed
 import uvicorn
 
 
-def model(*_):
-    return {'content': json.dumps({'category': 'draft', 'body': '王老师您好：\n\n谢谢您的通知。我已收到材料，会在讨论前仔细阅读。\n\n祝好！', 'questions': []}, ensure_ascii=False)}
+def model(messages, *_):
+    context = json.loads(messages[-1]['content'])
+    instruction = context.get('instruction', '')
+    body = ('【模拟更新】' + instruction) if instruction else '王老师您好：\n\n谢谢您的通知。我已收到材料，会在讨论前仔细阅读。\n\n祝好！'
+    return {'content': json.dumps({'category': 'draft', 'body': body, 'questions': []}, ensure_ascii=False)}
 
 
 class MockMailbox:
@@ -30,7 +33,7 @@ class MockMailbox:
         pass
 
 
-app = create_app(tempfile.mkdtemp(prefix='.test-data-email-preview-', dir=ROOT), model=model, background=False)
+app = create_app(tempfile.mkdtemp(prefix='.test-data-email-preview-', dir=ROOT), model=model)
 app.state.demo = True
 app.state.cfg.save({'username': 'preview', 'password': password_hash('local-preview-only')})
 mail = app.state.mail
