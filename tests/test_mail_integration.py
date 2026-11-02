@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from hikari.app import create_app
 from hikari.core import digest, password_hash
 from hikari.mail import DefinitelyNotSent, Mail
-from hikari.mail_transport import Transport, parse_message, protect_secret
+from hikari.mail_transport import Transport, fetch_metadata, received_timestamp, parse_message, protect_secret
 from test_mail import FakeTransport, draft, message, send, worker
 
 
@@ -354,3 +354,48 @@ def test_unknown_body_encoding_is_incomplete_data_not_sync_failure(tmp_path):
     parsed = parse_message(raw, 'in', time.time(), 'INBOX:1:1', tmp_path)
     assert parsed['body'] == ''
     assert '无法解析' in parsed['warning']
+
+
+@pytest.mark.parametrize('date', ['7-Oct-2026 14:51:18 +0800', '07-Oct-2026 14:51:18 +0800', ' 7-Oct-2026 14:51:18 +0800'])
+def test_imap_metadata_after_header_literal_and_one_digit_day(date):
+    from datetime import datetime, timezone
+    literal = b'Message-ID: <synthetic@example.org>\r\nX-Untrusted: INTERNALDATE "invalid"\r\n\r\n'
+    response = [(b'1 (UID 26 BODY[HEADER.FIELDS (MESSAGE-ID)] {100}', literal),
+                b' INTERNALDATE "' + date.encode() + b'" RFC822.SIZE 448891)']
+    metadata = fetch_metadata(response)
+    assert literal not in metadata
+    assert b'RFC822.SIZE 448891' in metadata
+    assert received_timestamp(metadata) == datetime(2026, 10, 7, 6, 51, 18, tzinfo=timezone.utc).timestamp()
+
+
+def test_split_fetch_response_syncs_complete_synthetic_message(service):
+    app, _ = service
+    m = app.state.mail
+    class SplitFetch(MockIMAP):
+        def uid(self, command, *args):
+            if command == 'fetch':
+                if args[1] == '(BODY.PEEK[])':
+                    return 'OK', [(b'1 (BODY[] {100}', b'From: person@example.org\r\nMessage-ID: <split@example.org>\r\nSubject: Synthetic\r\n\r\nSynthetic body'), b')']
+                return 'OK', [(b'1 (UID 8 BODY[HEADER.FIELDS (MESSAGE-ID)] {40}', b'Message-ID: <split@example.org>\r\n\r\n'),
+                              b' INTERNALDATE "7-Oct-2026 14:51:18 +0800" RFC822.SIZE 100)']
+            return super().uid(command, *args)
+    adapter = object.__new__(Transport)
+    adapter.secrets = {'sent': ''}
+    adapter.cfg = app.state.cfg
+    adapter.connect = lambda: SplitFetch()
+    m.transport = adapter
+    m.sync()
+    assert m.status()['last_sync'] > 0
+    assert m.status()['error'] == ''
+    assert m.detail('<split@example.org>')['message']['payload']['body'] == 'Synthetic body'
+
+
+def test_invalid_imap_time_shows_safe_specific_error(service):
+    app, _ = service
+    m = app.state.mail
+    def invalid(_):
+        received_timestamp(b'INTERNALDATE "bad date"')
+    m.transport.fetch = invalid
+    with pytest.raises(ValueError, match='时间格式无法解析'):
+        m.sync()
+    assert m.status()['error'] == '同步失败：邮件服务器时间格式无法解析'

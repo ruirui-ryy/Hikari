@@ -416,7 +416,12 @@ class Mail:
                 from .mail_transport import AuthenticationFailed
                 if isinstance(e, AuthenticationFailed):
                     self.set_meta('auth_failed', '1')
-                self.set_meta('sync_error', '凭证失效，请在主机重新配置' if isinstance(e, AuthenticationFailed) else '同步失败，请检查主机网络、邮箱配置和文件夹')
+                safe_errors = {'请在主机配置已发送文件夹名称', '无法列出邮箱文件夹', 'IMAP 请求失败',
+                               '无法读取邮件标识', '邮件缺少服务器收件时间', '邮件服务器时间格式无法解析', '无法读取邮件正文'}
+                detail = str(e) if isinstance(e, ValueError) and str(e) in safe_errors else ''
+                error = ('凭证失效，请在主机重新配置' if isinstance(e, AuthenticationFailed) else
+                         '同步失败：' + detail if detail else '同步失败，请检查主机网络、邮箱配置和文件夹')
+                self.set_meta('sync_error', error)
                 raise ValueError(self.meta('sync_error')) from None
 
     def status(self):

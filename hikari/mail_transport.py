@@ -8,7 +8,6 @@ import json
 import re
 import smtplib
 import ssl
-import time
 from datetime import datetime, timedelta, timezone
 from email import policy
 from email.message import EmailMessage
@@ -21,6 +20,30 @@ from .mail import DefinitelyNotSent
 
 class AuthenticationFailed(Exception):
     pass
+
+
+def fetch_metadata(data):
+    """IMAP literals split a FETCH response; attributes may follow the literal.
+
+    Keep protocol fragments only. Literal mail headers/bodies are never metadata.
+    """
+    return b' '.join(item[0] if isinstance(item, tuple) else item
+                     for item in data if isinstance(item, (tuple, bytes)))
+
+
+def received_timestamp(metadata):
+    match = re.search(rb'INTERNALDATE "([^"\r\n]+)"', metadata)
+    if not match:
+        raise ValueError('邮件缺少服务器收件时间')
+    try:
+        # The provider uses both "7-Oct-..." and "29-Oct-...". Unlike
+        # imaplib.Internaldate2tuple, RFC date parsing accepts a one-digit day.
+        value = email.utils.parsedate_to_datetime(match[1].decode('ascii').replace('-', ' ', 2))
+        if value.tzinfo is None:
+            raise ValueError()
+        return value.timestamp()
+    except (ValueError, TypeError, UnicodeError, OverflowError):
+        raise ValueError('邮件服务器时间格式无法解析') from None
 
 
 def protect_secret(text):
@@ -228,17 +251,15 @@ class Transport:
                     chunks = [r for r in header if isinstance(r, tuple)]
                     if not chunks:
                         raise ValueError('无法读取邮件标识')
-                    metadata, raw_header = chunks[0]
+                    metadata = fetch_metadata(header)
+                    raw_header = chunks[0][1]
                     mid = str(email.message_from_bytes(raw_header, policy=policy.default).get('Message-ID', '')).strip()
                     if mid and service.db.one('SELECT id FROM mail_messages WHERE id=?', (mid,)):
                         present.add(mid)
                         service.db.execute("UPDATE mail_messages SET location=?,deleted=0,direction=CASE WHEN ?='out' THEN 'out' ELSE direction END WHERE id=?", (location, direction, mid))
                         continue
                     size = re.search(rb'RFC822.SIZE (\d+)', metadata)
-                    stamp = imaplib.Internaldate2tuple(metadata)
-                    if not stamp:
-                        raise ValueError('邮件缺少服务器收件时间')
-                    received = time.mktime(stamp)
+                    received = received_timestamp(metadata)
                     if size and int(size[1]) > 30 * 1024 * 1024:
                         record = parse_message(raw_header, direction, received, location, service.root)
                         record['warning'] = '邮件超过 30 MB，仅保存邮件头；正文和附件尚未读懂，请在邮箱核对'
@@ -327,14 +348,14 @@ class Transport:
                     found = self.checked(conn.uid('search', None, 'HEADER', 'Message-ID', '"' + mid + '"'))[0].split()
                     for remote_uid in found:
                         headers = self.checked(conn.uid('fetch', remote_uid, '(INTERNALDATE RFC822.SIZE)'))
-                        metadata = next((h[0] if isinstance(h, tuple) else h for h in headers if h), b'')
+                        metadata = fetch_metadata(headers)
                         size = re.search(rb'RFC822.SIZE (\d+)', metadata)
-                        stamp = imaplib.Internaldate2tuple(metadata)
-                        if not size or int(size[1]) > 30 * 1024 * 1024 or not stamp:
+                        if not size or int(size[1]) > 30 * 1024 * 1024:
                             continue
+                        received = received_timestamp(metadata)
                         data = self.checked(conn.uid('fetch', remote_uid, '(BODY.PEEK[])'))
                         raw = b''.join(r[1] for r in data if isinstance(r, tuple))
-                        record = parse_message(raw, direction, time.mktime(stamp), folder + ':' + validity + ':' + remote_uid.decode(), service.root)
+                        record = parse_message(raw, direction, received, folder + ':' + validity + ':' + remote_uid.decode(), service.root)
                         if record['id'] == mid:
                             records.append(record)
             return records
