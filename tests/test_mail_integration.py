@@ -146,6 +146,26 @@ class MockIMAP:
         pass
 
 
+@pytest.mark.parametrize('lines,expected', [
+    ([b'(\\HasNoChildren) "/" "Sent Messages"', b'(\\HasNoChildren) "/" "INBOX"'], '"Sent Messages"'),
+    ([b'(\\Sent) "/" "Sent Other"', b'(\\HasNoChildren) "/" "Sent Messages"'], '"Sent Other"'),
+    ([b'(\\NoSelect) "/" "Sent Messages"'], None),
+    ([b'(\\HasNoChildren) "/" "Not Sent Messages"'], None),
+    ([b'(\\Sent) "/" "First"', b'(\\Sent) "/" "Second"'], None),
+])
+def test_sent_folder_discovery_without_special_use(lines, expected):
+    adapter = object.__new__(Transport)
+    adapter.secrets = {'sent': ''}
+    class Listing:
+        def list(self):
+            return 'OK', lines
+    if expected is None:
+        with pytest.raises(ValueError):
+            adapter.folders(Listing())
+    else:
+        assert adapter.folders(Listing()) == [('INBOX', 'in'), (expected, 'out')]
+
+
 def test_imap_uid_reset_cleaned_identity_and_deletion_inventory(service):
     app, _ = service
     m = app.state.mail

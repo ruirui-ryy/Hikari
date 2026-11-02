@@ -61,7 +61,7 @@ def configure(cfg):
     password = getpass.getpass('邮箱客户端专用密码（不显示）: ')
     if not password:
         raise ValueError('客户端专用密码不能为空')
-    # Folder names are not assumed; discover selectable sent folders via SPECIAL-USE.
+    # Discover the server's sent folder; an explicit wire name remains optional.
     sent = input('已发送文件夹的 IMAP 名称（留空尝试自动发现）: ').strip()
     value = dict(address=address, password=password, sent=sent)
     atomic_write(cfg.home / 'email-secret.dpapi', protect_secret(json.dumps(value)))
@@ -171,13 +171,27 @@ class Transport:
             status, lines = conn.list()
             if status != 'OK':
                 raise ValueError('无法列出邮箱文件夹')
+            special, provider = [], []
             for line in lines or []:
-                if line and b'\\sent' in line.lower():
-                    # Preserve the server's encoded/quoted wire mailbox name.
-                    match = re.match(rb'\([^)]*\)\s+(?:"[^"]*"|NIL)\s+(.+)', line)
-                    if match:
-                        sent = match[1].decode('ascii')
-                        break
+                if not line:
+                    continue
+                match = re.fullmatch(rb'\(([^)]*)\)\s+(?:"[^"]*"|NIL)\s+(.+)', line)
+                if not match:
+                    continue
+                flags = set(match[1].lower().split())
+                if b'\\noselect' in flags:
+                    continue
+                # Preserve the server's encoded/quoted wire mailbox name. This
+                # provider also exposes Sent Messages without a SPECIAL-USE flag;
+                # use it only when actually returned by LIST, never invent it.
+                wire_name = match[2].decode('ascii')
+                if b'\\sent' in flags:
+                    special.append(wire_name)
+                if match[2] in (b'"Sent Messages"', b'Sent Messages'):
+                    provider.append(wire_name)
+            candidates = special or provider
+            if len(candidates) == 1:
+                sent = candidates[0]
         if not sent:
             raise ValueError('请在主机配置已发送文件夹名称')
         return [('INBOX', 'in'), (sent, 'out')]
