@@ -30,13 +30,14 @@
 - DeepSeek 自主生成检索词、多轮搜索阅读，最终回答提供版本核对后的来源。
 - 三类 Markdown 记忆、用户编辑保护、修订与撤销。
 - 手机和电脑布局、公式显示、来源预览、资料上传与学习空间备份。
-- 独立邮件入口、IMAP 只读同步、单 Agent 分类拟稿、版本绑定确认发送与不确定结果核实；真实邮箱接入待验证。
+- 独立邮件入口、IMAP 只读同步、单 Agent 分类拟稿、版本绑定确认发送与不确定结果核实；真实收信接入已验证，拟稿质量和发送仍待用户验收。
 
 扫描页、图片与图中公式暂不识别。支持 Tailscale Serve 固定私网地址；真实课程质量与 Android 真机体验仍需相应验收。
 
 - [第一版需求](docs/REQUIREMENTS.md)
 - [邮件回复功能需求](docs/EMAIL_REQUIREMENTS.md)
 - [邮件配置、使用与验收边界](docs/EMAIL_RUNNING.md)
+- [手机与电脑邮件验收步骤](docs/EMAIL_ACCEPTANCE.md)
 - [架构设计](docs/ARCHITECTURE.md)
 - [技术核查与验收计划](docs/VALIDATION.md)
 - [运行、外网连接与恢复](docs/RUNNING.md)
