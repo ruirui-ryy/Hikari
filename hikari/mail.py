@@ -416,6 +416,7 @@ class Mail:
                 self.set_meta('sync_error', '')
                 self.set_meta('sync_diagnostic', '')
             except Exception as e:
+                import imaplib
                 import traceback
                 from pathlib import Path
                 from .mail_transport import AuthenticationFailed
@@ -430,8 +431,12 @@ class Mail:
                 safe_errors = {'请在主机配置已发送文件夹名称', '无法列出邮箱文件夹', 'IMAP 请求失败',
                                '无法读取邮件标识', '邮件缺少服务器收件时间', '邮件服务器时间格式无法解析', '无法读取邮件正文'}
                 detail = str(e) if isinstance(e, ValueError) and str(e) in safe_errors else ''
-                error = ('凭证失效，请在主机重新配置' if isinstance(e, AuthenticationFailed) else
-                         '同步失败：' + detail if detail else f'同步失败（{phase}，{type(e).__name__}），请检查主机网络或联系维护者')
+                if isinstance(e, AuthenticationFailed):
+                    error = '凭证失效，请在主机重新配置'
+                elif isinstance(e, (ConnectionError, TimeoutError, imaplib.IMAP4.abort)):
+                    error = '邮箱连接暂时中断，已保存邮件仍可查看；稍后会自动重试'
+                else:
+                    error = '同步失败：' + detail if detail else f'同步失败（{phase}，{type(e).__name__}），请检查主机网络或联系维护者'
                 self.set_meta('sync_error', error)
                 raise ValueError(self.meta('sync_error')) from None
 

@@ -183,9 +183,16 @@ class Transport:
         conn = imaplib.IMAP4_SSL('imap.exmail.qq.com', 993, ssl_context=ssl.create_default_context(), timeout=30)
         try:
             conn.login(self.secrets['address'], self.secrets['password'])
-        except imaplib.IMAP4.error:
-            conn.logout()
-            raise AuthenticationFailed() from None
+        except Exception as exc:
+            try:
+                conn.shutdown()
+            except Exception:
+                pass
+            # abort is an IMAP4.error subclass, but means a broken connection,
+            # not rejected credentials. Preserve it so background sync retries.
+            if isinstance(exc, imaplib.IMAP4.error) and not isinstance(exc, imaplib.IMAP4.abort):
+                raise AuthenticationFailed() from None
+            raise
         return conn
 
     def folders(self, conn):

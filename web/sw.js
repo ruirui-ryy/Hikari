@@ -1,4 +1,4 @@
-const CACHE='hikari-shell-v6';
+const CACHE='hikari-shell-v7';
 const OFFLINE=`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hikari · 暂时无法连接</title><style>body{margin:0;padding:12vh 24px;background:#fafbf8;color:#283a33;font:17px/1.7 system-ui,sans-serif}main{max-width:480px;margin:auto}a{color:#36644d}</style><main><h1>暂时无法连接 Hikari</h1><p>请确认主机开机、Hikari 正在运行，且手机与主机的 Tailscale 已连接。</p><p>连接恢复后，<a href="/">点击重新打开</a>。聊天和资料仍保存在主机上。</p></main></html>`;
 
 // Read actual HTML URLs, including version queries, so the cache cannot drift

@@ -414,3 +414,46 @@ def test_sync_diagnostics_never_include_exception_values(service):
     m.transport = FakeTransport()
     m.sync()
     assert m.meta('sync_diagnostic') == ''
+
+
+@pytest.mark.parametrize('kind', ['abort', 'reset', 'auth'])
+def test_imap_login_disconnect_is_not_invalid_credentials(service, monkeypatch, kind):
+    import imaplib
+    from hikari.mail_transport import AuthenticationFailed
+    app, _ = service
+    errors = {'abort': imaplib.IMAP4.abort('private server text'),
+              'reset': ConnectionResetError('private server text'), 'auth': imaplib.IMAP4.error('private server text')}
+    class LoginFailure:
+        closed = False
+        def login(self, *_):
+            raise errors[kind]
+        def shutdown(self):
+            self.closed = True
+    connection = LoginFailure()
+    monkeypatch.setattr(imaplib, 'IMAP4_SSL', lambda *a, **k: connection)
+    adapter = object.__new__(Transport)
+    adapter.secrets = {'address': 'owner@smail.nju.edu.cn', 'password': 'dummy'}
+    expected = AuthenticationFailed if kind == 'auth' else type(errors[kind])
+    with pytest.raises(expected):
+        adapter.connect()
+    assert connection.closed
+
+
+def test_reset_keeps_saved_mail_and_recovers_automatically(service):
+    app, _ = service
+    m = app.state.mail
+    m.transport.records = [message()]
+    m.sync()
+    last_success = m.status()['last_sync']
+    def reset(_):
+        raise ConnectionResetError('private network failure')
+    m.transport.fetch = reset
+    with pytest.raises(ValueError, match='暂时中断'):
+        m.sync()
+    assert m.status()['last_sync'] == last_success
+    assert m.db.one('SELECT count(*) n FROM mail_messages')['n'] == 1
+    assert m.meta('auth_failed') != '1'
+    assert json.loads(m.meta('sync_diagnostic'))['type'] == 'ConnectionResetError'
+    m.transport = FakeTransport()
+    m.sync()
+    assert m.status()['error'] == ''
