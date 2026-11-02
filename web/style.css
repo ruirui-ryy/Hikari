@@ -222,3 +222,12 @@ dialog{padding:19px}
 }
 
 #chat-title{padding:0;text-align:left;max-width:48%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mail-actions{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}
+#email-detail{max-width:900px;margin:auto}
+#email-detail fieldset{border:0;padding:0;margin:0;min-width:0}
+#email-detail textarea{width:100%;min-height:100px}
+#email-detail pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:480px;overflow:auto}
+#email-detail details{margin:18px 0;padding:12px;border:1px solid #dce4da;border-radius:12px}
+#email-detail label{display:block;margin:16px 0}
+#email-list .document button{text-align:left;white-space:normal;overflow-wrap:anywhere}
+#email-filter{margin:12px;width:260px;max-width:100%}

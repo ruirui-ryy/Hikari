@@ -54,7 +54,7 @@ class Config:
         if self.path.exists():
             self.values.update(json.loads(self.path.read_text('utf-8')))
         root = Path(self.values['knowledge']).expanduser().resolve()
-        if self.home.is_relative_to(root) or any(root.is_relative_to(self.home / part) for part in ['memory', 'generated', 'staging', 'backups']):
+        if self.home.is_relative_to(root) or any(root.is_relative_to(self.home / part) for part in ['memory', 'generated', 'staging', 'backups', 'email']):
             raise ValueError('资料目录必须独立于数据库、记忆、生成内容和备份目录')
         for folder in ['knowledge', 'memory', 'generated', 'staging', 'backups']:
             (self.home / folder).mkdir(exist_ok=True)

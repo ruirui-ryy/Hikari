@@ -23,6 +23,8 @@ from .agent import Agent
 from .core import Config, DB, InstanceLock, ROOT, digest, password_matches, uid, within
 from .library import Library, SUPPORTED, fingerprint
 from .memory import Memory
+from .mail import Mail
+from .mail_api import mount_mail, sync_loop
 
 
 class Login(BaseModel):
@@ -67,6 +69,14 @@ def create_app(home=None, model=None, background=True):
     library = Library(cfg, db)
     memory = Memory(cfg, db, library)
     agent = Agent(cfg, db, library, memory, model)
+    mail = Mail(cfg, db)
+    agent.mail = mail
+    if (cfg.home / 'email-secret.dpapi').exists():
+        try:
+            from .mail_transport import Transport
+            mail.transport = Transport(cfg)
+        except Exception:
+            mail.set_meta('sync_error', '无法读取本机邮箱凭证，请在主机重新配置')
     stop = threading.Event()
     attempts = {}
     auth_lock = threading.Lock()
@@ -81,12 +91,16 @@ def create_app(home=None, model=None, background=True):
     async def lifespan(app):
         lock = InstanceLock(cfg.home / 'instance.lock')
         agent.recover()
+        mail.recover()
         threads = []
         if background:
             for target in [agent.loop, scanning]:
                 t = threading.Thread(target=target, daemon=True)
                 t.start()
                 threads.append(t)
+            t = threading.Thread(target=sync_loop, args=(mail, stop, agent.wake), daemon=True)
+            t.start()
+            threads.append(t)
         try:
             yield
         finally:
@@ -102,6 +116,7 @@ def create_app(home=None, model=None, background=True):
     app = FastAPI(title='Hikari', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.cfg, app.state.db = cfg, db
     app.state.library, app.state.memory, app.state.agent = library, memory, agent
+    app.state.mail = mail
 
     @app.middleware('http')
     async def headers_and_origin(request: Request, call_next):
@@ -133,6 +148,8 @@ def create_app(home=None, model=None, background=True):
         token = request.cookies.get('hikari_session', '')
         if not token or not db.one('SELECT token FROM sessions WHERE token=? AND expires>?', (digest(token), time.time())):
             raise HTTPException(401, '请登录')
+
+    mount_mail(app, mail, agent, auth)
 
     @app.get('/api/health')
     def health():
@@ -183,10 +200,13 @@ def create_app(home=None, model=None, background=True):
     def status():
         task = db.one("SELECT id,chat,status,updated FROM tasks WHERE status NOT IN ('queued','completed','failed','interrupted','cancelled') ORDER BY created LIMIT 1")
         if not task and agent.active:
+            if str(agent.active).startswith('mail:'):
+                task = {'id': agent.active, 'status': 'mail_drafting'}
+        if not task and agent.active:
             task = db.one("SELECT id,chat,'remembering' AS status,updated FROM tasks WHERE id=? AND memory_status='reviewing'", (agent.active,))
         queued = db.one("SELECT count(*) AS n FROM tasks WHERE status='queued'")['n']
         return {'agent': task or {'status': 'idle'}, 'queued': queued, 'indexing': library.scanning,
-                'last_scan': library.last_scan, 'index_error': library.error}
+                'last_scan': library.last_scan, 'index_error': library.error, 'email': mail.status()}
 
     @app.get('/api/chats', dependencies=[Depends(auth)])
     def chats():
@@ -427,7 +447,7 @@ def create_app(home=None, model=None, background=True):
         filename = 'hikari-' + time.strftime('%Y%m%d-%H%M%S') + '-' + uid()[:6] + '.zip'
         path = cfg.home / 'backups' / filename
         snapshot = cfg.home / 'staging' / (uid() + '.sqlite3')
-        with agent.execution_lock, library.lock, memory.lock, db.lock:
+        with agent.execution_lock, mail.sync_lock, mail.lock, library.lock, memory.lock, db.lock:
             if agent.active or db.one("SELECT id FROM tasks WHERE status NOT IN ('completed','failed','interrupted','cancelled')"):
                 raise ValueError('请等待任务处理完毕后备份')
             try:
@@ -437,11 +457,11 @@ def create_app(home=None, model=None, background=True):
                     dst.commit()
                 with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
                     z.write(snapshot, 'app.sqlite3')
-                    for folder in ['memory', 'generated']:
+                    for folder in ['memory', 'generated', 'email']:
                         for file in (cfg.home / folder).rglob('*'):
                             if file.is_file() and file.resolve().is_relative_to((cfg.home / folder).resolve()):
                                 z.write(file, file.relative_to(cfg.home).as_posix())
-                    z.writestr('RESTORE.txt', '停服后恢复 app.sqlite3、memory、generated；资料原件及含密钥的 config.json 请在主机另外备份。恢复前保留当前数据副本。')
+                    z.writestr('RESTORE.txt', '此备份包含邮件正文、附件、草稿、发送记录及个人资料。停服后恢复 app.sqlite3、memory、generated、email；资料原件及含密钥的 config.json、email-secret.dpapi 请在主机另外备份。旧备份不会随邮件清理而删除。恢复前保留当前数据副本。')
             finally:
                 snapshot.unlink(missing_ok=True)
         return {'filename': filename}
@@ -452,6 +472,21 @@ def create_app(home=None, model=None, background=True):
         if not path.is_file() or path.suffix != '.zip':
             raise HTTPException(404, '备份不存在')
         return FileResponse(path, filename=filename)
+
+    @app.get('/api/backups', dependencies=[Depends(auth)])
+    def backup_list():
+        return {'notice': '备份可能包含邮件正文、附件和草稿；本地邮件清理不会删除旧备份。',
+                'files': [{'filename': p.name, 'size': p.stat().st_size, 'created': p.stat().st_mtime}
+                          for p in sorted((cfg.home / 'backups').glob('*.zip'), reverse=True) if p.is_file()]}
+
+    @app.delete('/api/backups/{filename}', dependencies=[Depends(auth)])
+    def delete_backup(filename: str):
+        with mail.sync_lock, mail.lock:
+            path = within(cfg.home / 'backups', filename)
+            if not path.is_file() or path.suffix != '.zip':
+                raise HTTPException(404, '备份不存在')
+            path.unlink()
+        return {'ok': True}
 
     app.mount('/static', StaticFiles(directory=ROOT / 'web'), name='static')
 

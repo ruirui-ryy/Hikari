@@ -21,6 +21,14 @@ def port_conflict_message(port):
 
 def main():
     cfg = Config()
+    if len(sys.argv) > 1 and sys.argv[1] == 'email-setup':
+        from .mail_transport import configure
+        lock = InstanceLock(cfg.home / 'instance.lock')
+        try:
+            configure(cfg)
+        finally:
+            lock.close()
+        return
     if len(sys.argv) > 1 and sys.argv[1] == 'setup':
         lock = InstanceLock(cfg.home / 'instance.lock')
         print('创建或重设 Hikari 个人账户（密码不会显示）')

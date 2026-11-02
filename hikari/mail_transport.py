@@ -203,7 +203,7 @@ class Transport:
                         continue
                     if remote_uid not in recent:
                         continue
-                    header = self.checked(conn.uid('fetch', remote_uid, '(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)] INTERNALDATE RFC822.SIZE)'))
+                    header = self.checked(conn.uid('fetch', remote_uid, '(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES IN-REPLY-TO FROM TO CC SUBJECT)] INTERNALDATE RFC822.SIZE)'))
                     chunks = [r for r in header if isinstance(r, tuple)]
                     if not chunks:
                         raise ValueError('无法读取邮件标识')
@@ -211,15 +211,19 @@ class Transport:
                     mid = str(email.message_from_bytes(raw_header, policy=policy.default).get('Message-ID', '')).strip()
                     if mid and service.db.one('SELECT id FROM mail_messages WHERE id=?', (mid,)):
                         present.add(mid)
-                        service.db.execute('UPDATE mail_messages SET location=?,deleted=0 WHERE id=?', (location, mid))
+                        service.db.execute("UPDATE mail_messages SET location=?,deleted=0,direction=CASE WHEN ?='out' THEN 'out' ELSE direction END WHERE id=?", (location, direction, mid))
                         continue
                     size = re.search(rb'RFC822.SIZE (\d+)', metadata)
-                    if size and int(size[1]) > 30 * 1024 * 1024:
-                        raise ValueError('邮件超过 30 MB，请在邮箱处理后重试')
                     stamp = imaplib.Internaldate2tuple(metadata)
                     if not stamp:
                         raise ValueError('邮件缺少服务器收件时间')
                     received = time.mktime(stamp)
+                    if size and int(size[1]) > 30 * 1024 * 1024:
+                        record = parse_message(raw_header, direction, received, location, service.root)
+                        record['warning'] = '邮件超过 30 MB，仅保存邮件头；正文和附件尚未读懂，请在邮箱核对'
+                        records.append(record)
+                        present.add(record['id'])
+                        continue
                     full = self.checked(conn.uid('fetch', remote_uid, '(BODY.PEEK[])'))
                     raw = b''.join(r[1] for r in full if isinstance(r, tuple))
                     if not raw:
@@ -257,7 +261,11 @@ class Transport:
             for aid in payload['attachments']:
                 folder = self.cfg.home / 'email' / 'outgoing'
                 info = json.loads((folder / (aid + '.json')).read_text('utf-8'))
-                msg.add_attachment((folder / aid).read_bytes(), maintype='application', subtype='octet-stream', filename=info['name'])
+                data = (folder / aid).read_bytes()
+                confirmed = payload.get('attachment_details', {}).get(aid)
+                if confirmed != {'name': info['name'], 'hash': digest(data)}:
+                    raise DefinitelyNotSent()
+                msg.add_attachment(data, maintype='application', subtype='octet-stream', filename=info['name'])
             # Explicit envelope commands identify definite pre-DATA rejections and
             # avoid silently sending to only a subset of confirmed recipients.
             if smtp.mail(self.secrets['address'])[0] != 250:
@@ -283,3 +291,34 @@ class Transport:
                     smtp.close()
                 except Exception:
                     pass
+
+    def fetch_specific(self, service, ids):
+        """Explicit user restoration / older reference lookup, not routine sync."""
+        conn = self.connect()
+        records = []
+        try:
+            for folder, direction in self.folders(conn):
+                self.checked(conn.select(folder, readonly=True))
+                validity = (conn.response('UIDVALIDITY')[1] or [b''])[0].decode()
+                for mid in ids[:20]:
+                    if not re.fullmatch(r'<[^<>\s"\\]+>', mid):
+                        continue
+                    found = self.checked(conn.uid('search', None, 'HEADER', 'Message-ID', '"' + mid + '"'))[0].split()
+                    for remote_uid in found:
+                        headers = self.checked(conn.uid('fetch', remote_uid, '(INTERNALDATE RFC822.SIZE)'))
+                        metadata = next((h[0] if isinstance(h, tuple) else h for h in headers if h), b'')
+                        size = re.search(rb'RFC822.SIZE (\d+)', metadata)
+                        stamp = imaplib.Internaldate2tuple(metadata)
+                        if not size or int(size[1]) > 30 * 1024 * 1024 or not stamp:
+                            continue
+                        data = self.checked(conn.uid('fetch', remote_uid, '(BODY.PEEK[])'))
+                        raw = b''.join(r[1] for r in data if isinstance(r, tuple))
+                        record = parse_message(raw, direction, time.mktime(stamp), folder + ':' + validity + ':' + remote_uid.decode(), service.root)
+                        if record['id'] == mid:
+                            records.append(record)
+            return records
+        finally:
+            try:
+                conn.logout()
+            except Exception:
+                pass

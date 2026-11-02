@@ -60,6 +60,7 @@ class Agent:
         self.wake = threading.Event()
         self.active = None
         self.execution_lock = threading.RLock()
+        self.mail = None
 
     def recover(self):
         self.db.execute("UPDATE tasks SET status='interrupted',error='服务重启，任务已中断；可手动重试',updated=? WHERE status NOT IN ('queued','completed','failed','interrupted','cancelled')", (time.time(),))
@@ -80,7 +81,11 @@ class Agent:
             if not row:
                 try:
                     with self.execution_lock:
+                        if self.mail and self.mail.safe_process_one(self, manual_only=True):
+                            continue
                         if self.review_idle():
+                            continue
+                        if self.mail and self.mail.safe_process_one(self):
                             continue
                 finally:
                     self.active = None
