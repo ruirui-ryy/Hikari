@@ -399,3 +399,18 @@ def test_invalid_imap_time_shows_safe_specific_error(service):
     with pytest.raises(ValueError, match='时间格式无法解析'):
         m.sync()
     assert m.status()['error'] == '同步失败：邮件服务器时间格式无法解析'
+
+
+def test_sync_diagnostics_never_include_exception_values(service):
+    app, _ = service
+    m = app.state.mail
+    def failure(_):
+        raise RuntimeError('PRIVATE-CONTENT-OR-CREDENTIAL')
+    m.transport.fetch = failure
+    with pytest.raises(ValueError):
+        m.sync()
+    assert 'PRIVATE' not in m.meta('sync_diagnostic') + m.status()['error']
+    assert json.loads(m.meta('sync_diagnostic'))['phase'] == '读取邮箱'
+    m.transport = FakeTransport()
+    m.sync()
+    assert m.meta('sync_diagnostic') == ''

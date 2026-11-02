@@ -403,8 +403,10 @@ class Mail:
                 raise ValueError('邮箱未连接')
             if self.meta('auth_failed') == '1':
                 raise ValueError('邮箱凭证失效，请在主机重新配置后重启')
+            phase = '读取邮箱'
             try:
                 records, missing = self.transport.fetch(self)
+                phase = '保存邮件'
                 self.ingest(records)
                 with self.lock:
                     for mid in missing:
@@ -412,15 +414,24 @@ class Mail:
                         self.db.execute("UPDATE mail_drafts SET state='source_deleted',version=version+1 WHERE message=? AND state NOT IN ('sent','unknown','submitting','cleaned','source_deleted')", (mid,))
                 self.set_meta('last_sync', time.time())
                 self.set_meta('sync_error', '')
+                self.set_meta('sync_diagnostic', '')
             except Exception as e:
+                import traceback
+                from pathlib import Path
                 from .mail_transport import AuthenticationFailed
+                # Keep exception values and mail content out of diagnostics. Code
+                # locations let host-side troubleshooting identify parser failures.
+                frames = [{'file': Path(f.filename).name, 'function': f.name, 'line': f.lineno}
+                          for f in traceback.extract_tb(e.__traceback__)
+                          if Path(f.filename).name in ('mail.py', 'mail_transport.py')]
+                self.set_meta('sync_diagnostic', packed({'phase': phase, 'type': type(e).__name__, 'frames': frames}))
                 if isinstance(e, AuthenticationFailed):
                     self.set_meta('auth_failed', '1')
                 safe_errors = {'请在主机配置已发送文件夹名称', '无法列出邮箱文件夹', 'IMAP 请求失败',
                                '无法读取邮件标识', '邮件缺少服务器收件时间', '邮件服务器时间格式无法解析', '无法读取邮件正文'}
                 detail = str(e) if isinstance(e, ValueError) and str(e) in safe_errors else ''
                 error = ('凭证失效，请在主机重新配置' if isinstance(e, AuthenticationFailed) else
-                         '同步失败：' + detail if detail else '同步失败，请检查主机网络、邮箱配置和文件夹')
+                         '同步失败：' + detail if detail else f'同步失败（{phase}，{type(e).__name__}），请检查主机网络或联系维护者')
                 self.set_meta('sync_error', error)
                 raise ValueError(self.meta('sync_error')) from None
 
