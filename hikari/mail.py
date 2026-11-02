@@ -41,6 +41,7 @@ class Mail:
         self.cfg, self.db = cfg, db
         self.lock = threading.RLock()
         self.sync_lock = threading.RLock()
+        self.submission_lock = threading.RLock()
         self.transport = None
         self.root = cfg.home / 'email'
         self.root.mkdir(exist_ok=True)
@@ -80,6 +81,8 @@ class Mail:
         self.db.execute("UPDATE mail_sends SET state='unknown',error='提交期间服务停止，先核实，未自动重发' WHERE state='submitting'")
         self.db.execute("UPDATE mail_drafts SET state='unknown' WHERE id IN (SELECT draft FROM mail_sends WHERE state='unknown')")
         self.db.execute("UPDATE mail_drafts SET state='possible',error='拟稿中断，可重新请求' WHERE state='processing'")
+        if self.meta('cleanup_after_submit') == '1':
+            self.cleanup()
 
     def meta(self, key, default=''):
         row = self.db.one('SELECT value FROM mail_meta WHERE key=?', (key,))
@@ -298,30 +301,33 @@ class Mail:
         return result
 
     def send(self, mid, version, thread_version, request_id):
-        # Serialise preflight + freeze + submission against sync, cleanup and disconnect.
-        with self.sync_lock, self.lock:
-            d = self.detail(mid)
-            old = d['draft']
-            existing = self.db.one('SELECT * FROM mail_sends WHERE request=? OR (draft=? AND version=?)', (request_id, old['id'] if old else '', version))
-            if existing:
-                if not old or existing['draft'] != old['id'] or existing['version'] != version:
-                    raise ValueError('发送请求标识已用于其他版本')
-                return self.send_public(existing)
-            if not self.transport:
-                raise ValueError('邮箱尚未连接，请在主机配置')
+        # Serialize confirmations; release the content lock during SMTP so cleanup
+        # can remove other messages while preserving only the active frozen send.
+        with self.submission_lock:
+            with self.lock:
+                d = self.detail(mid)
+                old = d['draft']
+                existing = self.db.one('SELECT * FROM mail_sends WHERE request=? OR (draft=? AND version=?)', (request_id, old['id'] if old else '', version))
+                if existing:
+                    if not old or existing['draft'] != old['id'] or existing['version'] != version:
+                        raise ValueError('发送请求标识已用于其他版本')
+                    return self.send_public(existing)
+                if not self.transport:
+                    raise ValueError('邮箱尚未连接，请在主机配置')
             self.sync(force=True)  # Must succeed, including sent-folder inspection.
-            d = self.detail(mid)
-            old = d['draft']
-            if not old or old['version'] != version or d['thread_version'] != thread_version or old['thread_version'] != thread_version:
-                raise ValueError('线程或草稿有更新，请打开最新版本重新确认')
-            p = self.validate_payload(old['payload'])
-            if old['state'] != 'draft' or p['questions'] or not p['body'].strip() or d['message']['deleted'] or d['message']['state'] in ('external_reply', 'superseded', 'cleaned'):
-                raise ValueError('请先保存完整草稿并解决待补充问题')
-            sid = uid()
-            message_id = '<hikari-' + sid + '@smail.nju.edu.cn>'
-            with self.db.tx() as c:
-                c.execute('INSERT INTO mail_sends VALUES(?,?,?,?,?,?,?,?,?,?)', (sid, old['id'], version, request_id, message_id, packed(p), digest(packed(p)), 'submitting', '', time.time()))
-                c.execute("UPDATE mail_drafts SET state='submitting' WHERE id=?", (old['id'],))
+            with self.lock:
+                d = self.detail(mid)
+                old = d['draft']
+                if not old or old['version'] != version or d['thread_version'] != thread_version or old['thread_version'] != thread_version:
+                    raise ValueError('线程或草稿有更新，请打开最新版本重新确认')
+                p = self.validate_payload(old['payload'])
+                if old['state'] != 'draft' or p['questions'] or not p['body'].strip() or d['message']['deleted'] or d['message']['state'] in ('external_reply', 'superseded', 'cleaned'):
+                    raise ValueError('请先保存完整草稿并解决待补充问题')
+                sid = uid()
+                message_id = '<hikari-' + sid + '@smail.nju.edu.cn>'
+                with self.db.tx() as c:
+                    c.execute('INSERT INTO mail_sends VALUES(?,?,?,?,?,?,?,?,?,?)', (sid, old['id'], version, request_id, message_id, packed(p), digest(packed(p)), 'submitting', '', time.time()))
+                    c.execute("UPDATE mail_drafts SET state='submitting' WHERE id=?", (old['id'],))
             state, error = 'sent', ''
             try:
                 self.transport.send(p, message_id, mid)
@@ -329,11 +335,13 @@ class Mail:
                 state, error = 'failed', '服务器未接受发送；请检查配置后保存新版本再确认重试'
             except Exception:
                 state, error = 'unknown', '发送结果待核实；未自动重发，请检查已发送邮件'
-            with self.db.tx() as c:
+            with self.lock, self.db.tx() as c:
                 c.execute('UPDATE mail_sends SET state=?,error=? WHERE id=?', (state, error, sid))
                 c.execute('UPDATE mail_drafts SET state=?,error=? WHERE id=?', ('draft' if state == 'failed' else state, error, old['id']))
                 if state == 'sent':
                     c.execute("UPDATE mail_messages SET state='sent' WHERE id=?", (mid,))
+            if self.meta('cleanup_after_submit') == '1':
+                self.cleanup()
             return self.send_public(self.db.one('SELECT * FROM mail_sends WHERE id=?', (sid,)))
 
     @staticmethod
@@ -360,17 +368,34 @@ class Mail:
             self.db.execute("UPDATE mail_drafts SET state='discarded',requested=0,version=version+1 WHERE message=?", (mid,))
 
     def cleanup(self):
-        # Wait for a submission already in progress. Keep tombstones and uncertain sends.
+        # Clear unrelated mail now; the frozen in-flight send is cleared on completion
+        # (or on restart after it becomes unknown). Keep durable tombstones.
         with self.sync_lock, self.lock, self.db.tx() as c:
             c.execute('PRAGMA secure_delete=ON')
-            c.execute("UPDATE mail_messages SET payload='{}',cleaned=1,sender='',state=CASE WHEN state='sent' THEN state ELSE 'cleaned' END")
-            c.execute("UPDATE mail_drafts SET payload='{}',instruction='',requested=0,version=version+1,state=CASE WHEN state IN ('unknown','sent') THEN state ELSE 'cleaned' END,error=''")
-            c.execute('DELETE FROM mail_versions')
-            c.execute("UPDATE mail_sends SET payload=''")
-            import shutil
-            for folder in ('incoming', 'outgoing'):
-                shutil.rmtree(self.root / folder, ignore_errors=False) if (self.root / folder).exists() else None
-        return {'ok': True, 'notice': '本地正文、附件与草稿已清理；最小记录及待核实发送仍保留，旧备份未删除'}
+            active = c.execute("SELECT message,payload FROM mail_drafts WHERE state='submitting'").fetchall()
+            keep_incoming, keep_outgoing = set(), set()
+            for row in active:
+                original = c.execute('SELECT payload FROM mail_messages WHERE id=?', (row['message'],)).fetchone()
+                if original:
+                    keep_incoming.update(a['file'] for a in json.loads(original['payload']).get('attachments', []) if a.get('file'))
+                for aid in json.loads(row['payload']).get('attachments', []):
+                    keep_outgoing.update((aid, aid + '.json'))
+            c.execute("UPDATE mail_messages SET payload='{}',cleaned=1,sender='',state=CASE WHEN state='sent' THEN state ELSE 'cleaned' END WHERE id NOT IN (SELECT message FROM mail_drafts WHERE state='submitting')")
+            c.execute("UPDATE mail_drafts SET payload='{}',instruction='',requested=0,version=version+1,state=CASE WHEN state IN ('unknown','sent') THEN state ELSE 'cleaned' END,error='' WHERE state<>'submitting'")
+            c.execute("DELETE FROM mail_versions WHERE draft NOT IN (SELECT id FROM mail_drafts WHERE state='submitting')")
+            c.execute("UPDATE mail_sends SET payload='' WHERE state<>'submitting'")
+            c.execute("INSERT OR REPLACE INTO mail_meta VALUES('cleanup_after_submit',?)", ('1' if active else '0',))
+            for name, keep in [('incoming', keep_incoming), ('outgoing', keep_outgoing)]:
+                folder = self.root / name
+                if folder.exists():
+                    if not folder.resolve().is_relative_to(self.root.resolve()):
+                        raise ValueError('邮件附件目录超出本地邮件区域')
+                    for path in folder.iterdir():
+                        if path.is_file() and path.name not in keep:
+                            path.unlink()
+                    if not any(folder.iterdir()):
+                        folder.rmdir()
+        return {'ok': True, 'notice': '本地正文、附件与草稿已清理；最小记录及待核实发送仍保留，旧备份未删除' + ('。正在提交的内容将在操作结束后清理' if active else '')}
 
     def sync(self, force=False):
         with self.sync_lock:

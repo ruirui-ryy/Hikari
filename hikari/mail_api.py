@@ -100,7 +100,7 @@ def mount_mail(app, mail, agent, auth):
 
     @app.post('/api/email/disconnect', dependencies=deps)
     def disconnect():
-        with mail.sync_lock, mail.lock:
+        with mail.submission_lock, mail.sync_lock, mail.lock:
             mail.set_meta('disconnected', '1')
             mail.transport = None
             (mail.cfg.home / 'email-secret.dpapi').unlink(missing_ok=True)

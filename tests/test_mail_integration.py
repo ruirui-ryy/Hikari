@@ -69,10 +69,11 @@ def test_attachment_changed_after_save_cannot_send(service):
     assert not m.transport.sent
 
 
-def test_cleanup_waits_submission_and_preserves_unknown(service):
+def test_cleanup_clears_other_mail_then_defers_active_submission(service):
     app, _ = service
     m = app.state.mail
     d = draft(m)
+    m.ingest([message('<unrelated@example.org>')])
     entered, release, cleaned = threading.Event(), threading.Event(), threading.Event()
     def delayed(*_):
         entered.set()
@@ -87,12 +88,16 @@ def test_cleanup_waits_submission_and_preserves_unknown(service):
         cleaned.set()
     cleaner = threading.Thread(target=cleanup)
     cleaner.start()
-    assert not cleaned.wait(.1)
+    assert cleaned.wait(5)
+    assert m.detail('<unrelated@example.org>')['message']['payload'] == {}
+    assert m.detail('<a@example.org>')['draft']['state'] == 'submitting'
+    assert m.detail('<a@example.org>')['draft']['payload']['body']
     release.set()
     t.join(5)
     cleaner.join(5)
     assert cleaned.is_set()
     assert m.db.one('SELECT state,payload FROM mail_sends') == {'state': 'unknown', 'payload': ''}
+    assert m.detail('<a@example.org>')['draft']['payload'] == {}
 
 
 def test_risk_retry_requires_new_saved_version(service):

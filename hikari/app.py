@@ -447,7 +447,7 @@ def create_app(home=None, model=None, background=True):
         filename = 'hikari-' + time.strftime('%Y%m%d-%H%M%S') + '-' + uid()[:6] + '.zip'
         path = cfg.home / 'backups' / filename
         snapshot = cfg.home / 'staging' / (uid() + '.sqlite3')
-        with agent.execution_lock, mail.sync_lock, mail.lock, library.lock, memory.lock, db.lock:
+        with agent.execution_lock, mail.submission_lock, mail.sync_lock, mail.lock, library.lock, memory.lock, db.lock:
             if agent.active or db.one("SELECT id FROM tasks WHERE status NOT IN ('completed','failed','interrupted','cancelled')"):
                 raise ValueError('请等待任务处理完毕后备份')
             try:
