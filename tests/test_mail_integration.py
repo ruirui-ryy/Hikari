@@ -239,3 +239,92 @@ def test_mime_html_external_instructions_and_unsupported_attachment(tmp_path):
     assert 'Ignore instructions' in parsed['body']
     assert 'alert' not in parsed['body']
     assert parsed['attachments'][0]['warning'] == '此格式尚未读懂'
+
+
+def test_offline_recovery_auth_failure_and_backoff(service):
+    from hikari.mail_api import sync_loop
+    from hikari.mail_transport import AuthenticationFailed
+    app, _ = service
+    m = app.state.mail
+    enabled = m.meta('enabled_at')
+    calls = []
+    def offline(_):
+        calls.append(1)
+        raise ConnectionError('must never expose this private error')
+    m.transport.fetch = offline
+    delays = []
+    class Stop:
+        def wait(self, delay):
+            delays.append(delay)
+            return len(delays) == 4
+    sync_loop(m, Stop(), threading.Event())
+    assert delays == [0, 120, 240, 480]
+    assert 'private' not in m.status()['error']
+    t = FakeTransport()
+    t.records = [message(), message('<background@example.org>', received=time.time() - 86400)]
+    m.transport = t
+    m.sync()
+    m.sync()
+    assert len(m.db.rows('SELECT * FROM mail_messages')) == 2
+    assert m.detail('<background@example.org>')['message']['state'] == 'history'
+    assert m.process_one(worker(m))
+    assert not m.process_one(worker(m))
+    assert Mail(m.cfg, m.db).meta('enabled_at') == enabled
+    def auth_failed(_):
+        calls.append(1)
+        raise AuthenticationFailed()
+    m.transport.fetch = auth_failed
+    for _ in range(2):
+        with pytest.raises(ValueError):
+            m.sync()
+    assert len(calls) == 4  # Three offline attempts, one authentication attempt.
+
+
+def test_transport_sends_exact_confirmed_attachment(service, monkeypatch):
+    app, c = service
+    m = app.state.mail
+    d = draft(m)
+    aid = c.post('/api/email/attachments', files={'file': ('确认附件.txt', b'exact bytes')}).json()['id']
+    d = m.save_draft(d['message']['id'], d['draft']['version'], d['thread_version'], d['draft']['payload'] | {'attachments': [aid]})
+    smtp = MockSMTP()
+    monkeypatch.setattr(smtplib, 'SMTP_SSL', lambda *a, **k: smtp)
+    adapter = object.__new__(Transport)
+    adapter.cfg, adapter.secrets = app.state.cfg, {'address': 'owner@smail.nju.edu.cn', 'password': 'dummy'}
+    adapter.send(d['draft']['payload'], '<frozen@example.org>', '<a@example.org>')
+    msg = BytesParser(policy=policy.default).parsebytes(smtp.raw)
+    attachment = list(msg.iter_attachments())[0]
+    assert attachment.get_filename() == '确认附件.txt'
+    assert attachment.get_payload(decode=True) == b'exact bytes'
+
+
+def test_cleanup_requested_during_crashed_send_finishes_on_restart(service):
+    app, _ = service
+    m = app.state.mail
+    d = draft(m)
+    m.db.execute("INSERT INTO mail_sends VALUES('crash',?,?,'crash-request','<crash@example.org>',?,'hash','submitting','',?)", (d['draft']['id'], d['draft']['version'], json.dumps(d['draft']['payload']), time.time()))
+    m.db.execute("UPDATE mail_drafts SET state='submitting'")
+    assert '操作结束后清理' in m.cleanup()['notice']
+    assert m.detail('<a@example.org>')['draft']['payload']['body']
+    restarted = Mail(m.cfg, m.db)
+    restarted.recover()
+    assert restarted.detail('<a@example.org>')['draft']['state'] == 'unknown'
+    assert restarted.detail('<a@example.org>')['draft']['payload'] == {}
+    assert restarted.db.one('SELECT payload,state FROM mail_sends') == {'payload': '', 'state': 'unknown'}
+
+
+def test_backup_management_deletes_only_selected_backup(service):
+    app, c = service
+    filename = c.post('/api/backup').json()['filename']
+    data = c.get('/api/backups').json()
+    assert data['files'][0]['filename'] == filename
+    assert '邮件' in data['notice']
+    assert c.delete('/api/backups/' + filename).status_code == 200
+    assert c.get('/api/backups').json()['files'] == []
+    assert (app.state.cfg.home / 'app.sqlite3').exists()
+
+
+def test_unknown_body_encoding_is_incomplete_data_not_sync_failure(tmp_path):
+    raw = b'From: sender@example.org\r\nMessage-ID: <bad-encoding@example.org>\r\nContent-Type: text/plain; charset=unknown-charset\r\n\r\ncontent'
+    parsed = parse_message(raw, 'in', time.time(), 'INBOX:1:1', tmp_path)
+    assert parsed['body'] == ''
+    assert '无法解析' in parsed['warning']

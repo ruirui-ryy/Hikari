@@ -101,7 +101,14 @@ def parse_message(raw, direction, received, location, root):
     refs = re.findall(r'<[^<>\s]+>', str(msg.get('References', '')) + ' ' + str(msg.get('In-Reply-To', '')))
     attachments = []
     body = msg.get_body(preferencelist=('plain', 'html'))
-    text = body.get_content() if body else ''
+    body_warning = ''
+    try:
+        text = body.get_content() if body else ''
+        if not isinstance(text, str):
+            raise ValueError('non-text content')
+    except (LookupError, UnicodeError, ValueError, KeyError):
+        text = ''
+        body_warning = '正文编码或格式无法解析，尚未读懂，请在邮箱核对'
     if body and body.get_content_type() == 'text/html':
         parser = TextHTML()
         parser.feed(text)
@@ -141,7 +148,7 @@ def parse_message(raw, direction, received, location, root):
                 to=[a for _, a in getaddresses(msg.get_all('To', []))], cc=[a for _, a in getaddresses(msg.get_all('Cc', []))],
                 subject=str(msg.get('Subject', '')), body=text[:100000], attachments=attachments,
                 received=received, direction=direction, location=location,
-                warning='正文超过读取上限' if len(text) > 100000 else '')
+                warning='正文超过读取上限' if len(text) > 100000 else body_warning)
 
 
 class Transport:
