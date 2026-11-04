@@ -1,6 +1,6 @@
 ﻿$ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
-$taskPort = & .\.venv\Scripts\python.exe scripts/check_service.py
+$taskPort = & .\local\venv\Scripts\python.exe scripts/check_service.py
 if ($LASTEXITCODE -ne 0) { throw '请先运行 scripts/start.ps1，并保持助手运行。' }
 $taskCommand = Get-Command tailscale.exe -ErrorAction SilentlyContinue
 if ($taskCommand) {
@@ -9,11 +9,11 @@ if ($taskCommand) {
     $taskTailscale = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
 }
 if (-not (Test-Path -LiteralPath $taskTailscale)) { throw '请先安装并登录 Tailscale。' }
-$taskStateText = & .\.venv\Scripts\python.exe scripts/tailscale_json.py $taskTailscale status
+$taskStateText = & .\local\venv\Scripts\python.exe scripts/tailscale_json.py $taskTailscale status
 if ($LASTEXITCODE -ne 0) { throw '无法连接 Tailscale，请确认已启动并登录。' }
 $taskState = $taskStateText | ConvertFrom-Json
 if ($taskState.BackendState -ne 'Running') { throw '请先连接 Tailscale。' }
-$taskExistingText = & .\.venv\Scripts\python.exe scripts/tailscale_json.py $taskTailscale serve
+$taskExistingText = & .\local\venv\Scripts\python.exe scripts/tailscale_json.py $taskTailscale serve
 if ($LASTEXITCODE -ne 0) { throw '无法检查已有 Serve 配置，未进行修改。' }
 $taskExisting = $taskExistingText | ConvertFrom-Json
 $taskTarget = "http://127.0.0.1:$taskPort"

@@ -8,7 +8,7 @@
 2. 在项目目录的主机终端运行：
 
    ```powershell
-   .\.venv\Scripts\python.exe -m hikari email-setup
+   .\local\venv\Scripts\python.exe -m hikari email-setup
    ```
 
 3. 按提示输入完整 `@smail.nju.edu.cn` 地址和邮箱客户端专用密码。密码通过隐藏输入读取，以 Windows DPAPI 加密保存为数据目录中的 `email-secret.dpapi`，绑定当前 Windows 用户。没有明文回退，不通过网页配置、返回或发送给模型。主机终端配置完成后，重新启动 Hikari。
@@ -77,4 +77,4 @@
 
 已验证账户认证、当前文件夹选择及首次完整同步。仍须验证：长期连接限制、服务器 UID 变化、无标准线程头的往来、SMTP 是否保存已发送副本和是否保留 Message-ID、真实附件提取质量、云端模型分类与拟稿质量及用量、手机完整操作。任何真实发送都由用户逐封确认。
 
-复现模拟界面：`python scripts/preview_email.py`，本机端口 8767，预览账户 `preview`、密码 `local-preview-only`。此脚本每次建立独立的 `.test-data-email-preview-*` 目录，只使用模拟收发，不读取正式数据或凭证；检查后停止该预览进程即可。
+复现模拟界面：`python scripts/preview_email.py`，本机端口 8767，预览账户 `preview`、密码 `local-preview-only`。此脚本每次建立独立的 `local/previews/email-*` 目录，只使用模拟收发，不读取正式数据或凭证；检查后停止该预览进程即可。

@@ -76,7 +76,7 @@
 相关模拟测试：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_mail.py tests/test_mail_integration.py -q
+.\local\venv\Scripts\python.exe -m pytest tests/test_mail.py tests/test_mail_integration.py -q
 ```
 
 ## 如何记录结果

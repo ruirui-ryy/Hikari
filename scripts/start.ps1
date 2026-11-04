@@ -1,13 +1,13 @@
 ﻿$ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
-$taskPython = Join-Path (Get-Location) '.venv\Scripts\python.exe'
+$taskPython = Join-Path (Get-Location) 'local\venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $taskPython)) {
-    python -m venv --without-pip .venv
+    python -m venv --without-pip local\venv
     if ($LASTEXITCODE -ne 0) { throw '无法创建独立环境' }
 }
 & $taskPython -c "import fastapi,uvicorn,httpx,pypdf,pptx,docx,jieba,multipart"
 if ($LASTEXITCODE -ne 0) {
-    python -m pip --python .venv install -r requirements.lock.txt
+    python -m pip --python local\venv install -r requirements.lock.txt
     if ($LASTEXITCODE -ne 0) { throw '依赖安装失败' }
 }
 & $taskPython -c "from hikari.core import Config; import sys; sys.exit(0 if Config().get('password') else 2)"

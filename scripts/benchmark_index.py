@@ -13,7 +13,7 @@ from pptx.util import Inches
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-home = ROOT / '.test-scale' / uid()
+home = ROOT / 'local' / 'test-scale' / uid()
 cfg = Config(home)
 db = DB(home / 'app.sqlite3')
 lib = Library(cfg, db)

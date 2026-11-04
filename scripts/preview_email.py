@@ -33,7 +33,9 @@ class MockMailbox:
         pass
 
 
-app = create_app(tempfile.mkdtemp(prefix='.test-data-email-preview-', dir=ROOT), model=model)
+preview_root = ROOT / 'local' / 'previews'
+preview_root.mkdir(parents=True, exist_ok=True)
+app = create_app(tempfile.mkdtemp(prefix='email-', dir=preview_root), model=model)
 app.state.demo = True
 app.state.cfg.save({'username': 'preview', 'password': password_hash('local-preview-only')})
 mail = app.state.mail

@@ -5,7 +5,7 @@ let mailSubmittedUpdate=null,mailEditGeneration=0,mailOpenGeneration=0;
 const mailPending=new Set(['draft','incomplete','possible','review','unknown','submitting','processing','new','needs_review','requested']);
 async function loadEmail(){
   const data=await api('/email');mailData=data;
-  $('#email-status').textContent=(data.connected?'邮箱已配置':'邮箱未连接：请在主机停止 Hikari，运行 .venv\\Scripts\\python.exe -m hikari email-setup 后重启。')+' · '+(data.paused?'自动拟稿已暂停，同步继续':'约每两分钟同步，空闲时拟稿')+' · 最近成功同步：'+date(data.last_sync)+(data.error?' · '+data.error:'');
+  $('#email-status').textContent=(data.connected?'邮箱已配置':'邮箱未连接：请在主机停止 Hikari，运行 local\\venv\\Scripts\\python.exe -m hikari email-setup 后重启。')+' · '+(data.paused?'自动拟稿已暂停，同步继续':'约每两分钟同步，空闲时拟稿')+' · 最近成功同步：'+date(data.last_sync)+(data.error?' · '+data.error:'');
   $('#email-pause').textContent=data.paused?'恢复自动拟稿':'暂停自动拟稿';
   $('#email-badge').textContent=data.pending?' '+data.pending:'';
   const rows=data.messages.filter(m=>m.direction==='in'&&($('#email-filter').value==='all'||mailPending.has(m.draft_state||m.state)));

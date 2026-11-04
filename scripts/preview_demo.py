@@ -10,7 +10,7 @@ from hikari.app import create_app
 from hikari.core import ROOT, password_hash
 import uvicorn
 
-app = create_app(ROOT / '.preview-data')
+app = create_app(ROOT / 'local' / 'preview-data')
 app.state.demo = True
 app.state.cfg.save({'username': 'preview', 'password': password_hash('local-preview-only')})
 sample = app.state.library.root / '线性代数' / '向量与变换.md'

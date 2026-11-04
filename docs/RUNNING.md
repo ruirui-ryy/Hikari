@@ -11,10 +11,10 @@
 新机器可在项目目录执行：
 
 ```powershell
-python -m venv --without-pip .venv
-python -m pip --python .venv install -r requirements.lock.txt
-.\.venv\Scripts\python.exe -m hikari setup
-.\.venv\Scripts\python.exe -m hikari
+python -m venv --without-pip local/venv
+python -m pip --python local/venv install -r requirements.lock.txt
+.\local\venv\Scripts\python.exe -m hikari setup
+.\local\venv\Scripts\python.exe -m hikari
 ```
 
 启动脚本首次安装依赖要求主机 Python 已有 pip。锁定依赖文件为当前验证的 Windows / Python 3.13 环境。
@@ -42,8 +42,8 @@ Agent 不修改原件。网页同名上传会拒绝，请改名，或在主机�
 移动或删除原件后，旧路径可能保留为内部 `deleted` 记录，正常资料目录不会列出它们。若要清除这些索引记录，可先预览，再执行清理：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/cleanup_library.py
-.\.venv\Scripts\python.exe scripts/cleanup_library.py --apply
+.\local\venv\Scripts\python.exe scripts/cleanup_library.py
+.\local\venv\Scripts\python.exe scripts/cleanup_library.py --apply
 ```
 
 实际清理前会在 `data/backups/` 保存数据库快照。清理仅移除原件已不存在的旧索引记录，不删除资料文件、聊天、记忆或历史引用文字；重新放回原位置的文件会跳过，等待索引刷新。旧理解的来源失效状态仍然保留。
@@ -106,7 +106,7 @@ Agent 不修改原件。网页同名上传会拒绝，请改名，或在主机�
 
 ## 邮件回复
 
-停服后在主机运行 `.\.venv\Scripts\python.exe -m hikari email-setup`，隐藏输入学生邮箱客户端密码，以 Windows 当前用户保护保存，再启动 Hikari。不要把密码发送到聊天中。已有手机和电脑登录入口保持相同，新增独立“邮件”页面。
+停服后在主机运行 `.\local\venv\Scripts\python.exe -m hikari email-setup`，隐藏输入学生邮箱客户端密码，以 Windows 当前用户保护保存，再启动 Hikari。不要把密码发送到聊天中。已有手机和电脑登录入口保持相同，新增独立“邮件”页面。
 
 请先阅读 [邮件运行说明](EMAIL_RUNNING.md)，其中包括真实账户待验证事项、独立个人资料范围、逐封版本确认、发送结果不明的处理、清理和备份限制。本地模拟验收通过不代表真实邮箱已经接通，真实邮件始终由用户本人逐封确认发送。
 
@@ -117,16 +117,20 @@ Agent 不修改原件。网页同名上传会拒绝，请改名，或在主机�
 ```powershell
 .\scripts\test.ps1
 node --test tests/web_cache.test.mjs
-.\.venv\Scripts\python.exe scripts/smoke_model.py --agent
-.\.venv\Scripts\python.exe scripts/benchmark_index.py
+.\local\venv\Scripts\python.exe scripts/smoke_model.py --agent
+.\local\venv\Scripts\python.exe scripts/benchmark_index.py
 ```
 
-第一项使用模拟模型与合成文件，不发出真实模型请求。第二项明确调用真实模型，仅发送合成课程资料，会产生用量。第三项在 `.test-scale/` 建立 100 份、1 万页合成资料，仅用于规模验证，不代表真实讲义效果。
+第一项使用模拟模型与合成文件，不发出真实模型请求。第二项明确调用真实模型，仅发送合成课程资料，会产生用量。第三项在 `local/test-scale/` 建立 100 份、1 万页合成资料，仅用于规模验证，不代表真实讲义效果。
 
-`scripts/preview_demo.py` 在 8766 端口提供隔离的模拟模型演示，数据位于 `.preview-data/`，不是正式服务。演示账户是测试数据，不能用于公网部署。
+`scripts/preview_demo.py` 在 8766 端口提供隔离的模拟模型演示，数据位于 `local/preview-data/`，不是正式服务。演示账户是测试数据，不能用于公网部署。
 
 ## PDF 原文阅读
 
 PDF 资料和有效引用会在 Hikari 内置阅读器中打开，定位到 PDF 实际页码，支持上一页、下一页、输入页码、适合宽度和放大缩小。手机页面顶部提供返回对话和单独的下载入口。PDF.js、字体与字符映射均随项目本地提供，不使用外部在线文档阅读服务。失效的旧引用仍显示历史文字快照，不会把新版本 PDF 当成旧来源。
 
 当前按单页渲染控制手机内存，尚未加入全文搜索、文字选择和批注；特殊编码、加密或损坏文件可能无法显示，可下载原件处理。首次打开及翻页需要连接主机，不承诺离线保存 PDF。
+
+## 本机辅助目录
+
+环境、缓存、测试和预览输出集中在 `local/`：Python 环境为 `local/venv/`，测试数据与缓存为 `local/test-data/`、`local/pytest-cache/`，npm 缓存为 `local/npm-cache/`。Git 元数据保留在根目录 `.git/`，不要移动或删除。`local/venv/` 是运行环境，不要把整个 local 目录当缓存删除。其余测试、演示和缓存子目录可在对应进程停止后删除。正式资料和运行数据仍位于 `data/`。

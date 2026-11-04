@@ -15,8 +15,8 @@
 如果终端限制执行脚本，可直接运行：
 
 ```powershell
-.\.venv\Scripts\python.exe -m hikari setup
-.\.venv\Scripts\python.exe -m hikari
+.\local\venv\Scripts\python.exe -m hikari setup
+.\local\venv\Scripts\python.exe -m hikari
 ```
 
 项目已包含本地网页资源，运行时不需要 Node。新环境依赖安装见 [运行说明](docs/RUNNING.md)。
