@@ -50,7 +50,7 @@ function harness(){
 test('precache exact versioned URLs and all HTML script dependencies',async()=>{
   const h=harness();await h.event('install');h.offline();
   const urls=[...html.matchAll(/(?:src|href)="(\/static\/[^\"]+)"/g)].map(match=>match[1]);
-  assert(urls.includes('/static/style.css?v=4'));
+  assert(urls.includes('/static/style.css?v=5'));
   assert(urls.includes('/static/vendor/marked.umd.js?v=2'));
   for(const url of urls){
     const response=await h.request(url);
@@ -62,7 +62,7 @@ test('precache exact versioned URLs and all HTML script dependencies',async()=>{
 
 test('HTTP errors use cached assets as well as network disconnections',async()=>{
   const h=harness();await h.event('install');h.fail('/static/style.css');
-  assert.equal((await h.request('/static/style.css?v=4')).status,200);
+  assert.equal((await h.request('/static/style.css?v=5')).status,200);
 });
 
 test('offline navigation has its own styles and no uninitialised workspace',async()=>{

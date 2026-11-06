@@ -231,3 +231,6 @@ dialog{padding:19px}
 #email-detail label{display:block;margin:16px 0}
 #email-list .document button{text-align:left;white-space:normal;overflow-wrap:anywhere}
 #email-filter{margin:12px;width:260px;max-width:100%}
+
+/* Full Markdown reading keeps tables and code scrollable on phones. */
+dialog.markdown-reader{max-width:900px}dialog.markdown-reader .modal-head h2{font-size:17px;min-width:0}dialog.markdown-reader .modal-head button{flex-shrink:0}.document-path{font-size:12px;overflow-wrap:anywhere}.markdown-document{line-height:1.85;overflow-wrap:anywhere;padding-top:14px}.markdown-document pre{white-space:pre;word-break:normal;overflow:auto}.markdown-document pre code{padding:0}.markdown-document h1{font-size:1.65em}.markdown-document h2{font-size:1.35em}.markdown-document h3{font-size:1.15em}@media(max-width:600px){dialog.markdown-reader{width:calc(100% - 16px);max-height:92dvh;padding:16px}.markdown-document{font-size:15px}}
