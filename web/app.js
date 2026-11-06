@@ -74,7 +74,32 @@ $('#prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.
 $('#chat-options').onclick=async()=>{if(!state.chat)await newChat();const c=state.chats.find(c=>c.id===state.chat)||{title:'新对话',scope:''};const docs=await api('/documents');const scopes=[...new Set(docs.filter(d=>d.status!=='deleted').flatMap(d=>[d.path,...d.path.split('/').slice(0,-1).map((_,i)=>d.path.split('/').slice(0,i+1).join('/'))]))];modal('对话设置',`<form id="chat-edit"><label>名称<input name="title" value="${esc(c.title)}" maxlength="100" required></label><label>资料范围<input name="scope" list="scope-options" value="${esc(c.scope)}" placeholder="留空搜索全库；填写完整课程目录或文件路径"></label><datalist id="scope-options">${scopes.map(s=>`<option value="${esc(s)}">`).join('')}</datalist><p class="notice">范围用于此后发送的消息；已经排队的任务保留原范围。</p><button class="primary">保存</button></form>`);$('#chat-edit').onsubmit=async e=>{e.preventDefault();try{await api('/chats/'+state.chat,{method:'PUT',body:Object.fromEntries(new FormData(e.target))});$('#modal').close();await loadChats();state.snapshot='';await loadChat()}catch(e){toast(e.message)}}};
 $('#delete-chat').onclick=async()=>{if(!state.chat||!confirm('删除此聊天？已形成的长期记忆仍然保留。'))return;try{await api('/chats/'+state.chat,{method:'DELETE'});state.chat=null;state.snapshot='';localStorage.removeItem('hikari-chat');await loadChats();await loadChat()}catch(e){toast(e.message)}};
 async function poll(){if($('#workspace').classList.contains('hidden'))return;try{const s=await api('/status');const busy=s.agent.status!=='idle';$('#email-badge').textContent=s.email?.pending?' '+s.email.pending:'';if(state.view==='email')await loadEmail();$('#agent-status').className='status'+(busy?' busy':'');$('#agent-status span').textContent=(statuses[s.agent.status]||s.agent.status)+(s.queued?` · ${s.queued} 条排队`:'');$('#index-status').textContent=s.index_error|| (s.indexing?'正在检查与更新索引':'最近检查：'+date(s.last_scan));if(state.view==='chat')await loadChat();if(state.view==='memory'&&!$('#modal').open)await loadMemories();if(state.view==='library'&&s.indexing!==poll.wasIndexing)await loadLibrary();poll.wasIndexing=s.indexing}catch(e){if(state.online)toast(e.message)}}
-async function loadLibrary(){const docs=await api('/documents');const active=docs.filter(d=>d.status!=='deleted');$('#library-count').textContent=`${active.length} 份资料 · ${active.reduce((n,d)=>n+d.units,0)} 个原文位置`;$('#documents').innerHTML=active.map(d=>`<div class="document"><span class="file-icon">${esc(d.path.split('.').pop().toUpperCase())}</span><div class="info"><strong>${esc(d.path)}</strong><small>${d.units} 个位置 · ${date(d.updated)}</small>${d.warning?`<div class="warning">${esc(d.warning)}</div>`:''}</div><span class="badge ${d.status==='error'?'warn':''}">${({ready:'已索引',indexing:'处理中',error:'需检查'})[d.status]||esc(d.status)}</span>${d.status==='ready'?`<button data-doc="${d.id}" class="quiet">查看 ↗</button>`:''}</div>`).join('')||'<div class="empty">上传第一份资料，或将文件放入主机资料目录。</div>';$$('[data-doc]').forEach(b=>b.onclick=()=>openDoc(b.dataset.doc).catch(e=>toast(e.message)));const generated=await api('/generated');$('#generated').innerHTML=generated.map(f=>`<div class="document"><a href="/api/generated/${encodeURIComponent(f)}" download>${esc(f)}</a></div>`).join('')||'<p class="muted">需要时，可在对话中要求保存总结或练习。</p>'}
+function libraryTree(docs){
+  const root={folders:new Map(),files:[],count:0};
+  for(const doc of docs){
+    if(doc.status==='deleted')continue;
+    const parts=doc.path.split('/');parts.pop();let node=root;node.count++;
+    for(const part of parts){if(!node.folders.has(part))node.folders.set(part,{folders:new Map(),files:[],count:0});node=node.folders.get(part);node.count++}
+    node.files.push(doc);
+  }
+  return root;
+}
+const libraryFolders=new Map();
+function renderLibrary(docs){
+  $$('#documents details[data-folder]').forEach(folder=>libraryFolders.set(folder.dataset.folder,folder.open));
+  const tree=libraryTree(docs);
+  if(!tree.count)return '<div class="empty">上传第一份资料，或将文件放入主机资料目录。</div>';
+  function render(node,parent=''){
+    const folders=[...node.folders.entries()].sort(([a],[b])=>a.localeCompare(b,'zh-CN')).map(([name,child])=>{
+      const path=parent?parent+'/'+name:name;
+      return `<details class="library-folder" data-folder="${esc(path)}" ${libraryFolders.get(path)?'open':''}><summary><span class="folder-name">${esc(name)}</span><small>${child.count} 份资料</small></summary><div class="folder-content">${render(child,path)}</div></details>`;
+    }).join('');
+    const files=[...node.files].sort((a,b)=>a.path.localeCompare(b.path,'zh-CN')).map(d=>`<div class="document"><span class="file-icon">${esc(d.path.split('.').pop().toUpperCase())}</span><div class="info"><strong>${esc(d.path.split('/').pop())}</strong><small>${d.units} 个位置 · ${date(d.updated)}</small>${d.warning?`<div class="warning">${esc(d.warning)}</div>`:''}</div><span class="badge ${d.status==='error'?'warn':''}">${({ready:'已索引',indexing:'处理中',error:'需检查'})[d.status]||esc(d.status)}</span>${d.status==='ready'?`<button data-doc="${esc(d.id)}" class="quiet">查看 ↗</button>`:''}</div>`).join('');
+    return folders+(node===tree&&node.files.length?'<div class="root-files-label">根目录</div>':'')+files;
+  }
+  return render(tree);
+}
+async function loadLibrary(){const docs=await api('/documents');const active=docs.filter(d=>d.status!=='deleted');$('#library-count').textContent=`${active.length} 份资料 · ${active.reduce((n,d)=>n+d.units,0)} 个原文位置`;$('#documents').innerHTML=renderLibrary(active);$$('[data-doc]').forEach(b=>b.onclick=()=>openDoc(b.dataset.doc).catch(e=>toast(e.message)));const generated=await api('/generated');$('#generated').innerHTML=generated.map(f=>`<div class="document"><a href="/api/generated/${encodeURIComponent(f)}" download>${esc(f)}</a></div>`).join('')||'<p class="muted">需要时，可在对话中要求保存总结或练习。</p>'}
 $('#refresh-library').onclick=async()=>{try{await api('/documents/refresh',{method:'POST'});toast('已安排资料检查');await loadLibrary()}catch(e){toast(e.message)}};
 $('#upload-form').onsubmit=async e=>{e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;try{for(const file of $('#upload-file').files){const f=new FormData();f.append('file',file);f.append('folder',$('#upload-folder').value);await api('/documents/upload',{method:'POST',body:f})}toast('上传完成，主机将自动建立索引');$('#upload-file').value='';await loadLibrary()}catch(e){toast(e.message)}finally{button.disabled=false}};
 function pdfURL(doc,version,page){return '/static/pdf.html?'+new URLSearchParams({doc,version,page:String(page)})}
