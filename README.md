@@ -39,6 +39,7 @@
 - [邮件配置、使用与验收边界](docs/EMAIL_RUNNING.md)
 - [手机与电脑邮件验收步骤](docs/EMAIL_ACCEPTANCE.md)
 - [架构设计](docs/ARCHITECTURE.md)
+- [长期记忆目标架构与分层实施顺序](docs/MEMORY_ARCHITECTURE.md)
 - [技术核查与验收计划](docs/VALIDATION.md)
 - [运行、外网连接与恢复](docs/RUNNING.md)
 
