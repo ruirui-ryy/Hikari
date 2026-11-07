@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .agent import Agent
+from .note_retrieval import NoteRetrieval
 from .core import Config, DB, InstanceLock, ROOT, digest, password_matches, uid, within
 from .library import Library, SUPPORTED, fingerprint
 from .memory import Memory
@@ -68,6 +69,7 @@ def create_app(home=None, model=None, background=True):
     db = DB(cfg.home / 'app.sqlite3')
     library = Library(cfg, db)
     memory = Memory(cfg, db, library)
+    retrieval = NoteRetrieval(memory.notes)
     agent = Agent(cfg, db, library, memory, model)
     mail = Mail(cfg, db)
     agent.mail = mail
@@ -117,6 +119,7 @@ def create_app(home=None, model=None, background=True):
     app.state.cfg, app.state.db = cfg, db
     app.state.library, app.state.memory, app.state.agent = library, memory, agent
     app.state.mail = mail
+    app.state.note_retrieval = retrieval
 
     @app.middleware('http')
     async def headers_and_origin(request: Request, call_next):
@@ -370,6 +373,14 @@ def create_app(home=None, model=None, background=True):
         valid = library.current(row['doc'], row['version'])
         row['current'] = valid
         return row
+
+    @app.get('/api/notes/search', dependencies=[Depends(auth)])
+    def search_notes(q: str, mode: str, limit: int = 5):
+        return retrieval.search(q, mode, limit)
+
+    @app.get('/api/notes/{mid}', dependencies=[Depends(auth)])
+    def read_note(mid: str):
+        return retrieval.read(mid)
 
     @app.get('/api/memories', dependencies=[Depends(auth)])
     def memories():
