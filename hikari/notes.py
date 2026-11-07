@@ -276,12 +276,36 @@ class NoteStore:
         if not op or op['state'] != 'pending':
             return
         plan = json.loads(op['plan'])
+        locations = defaultdict(set)
+        for item in plan:
+            if item.get('id'):
+                locations[item['id']].add(item['path'].casefold())
+            for snapshot in [item['before'], item['after']]:
+                if snapshot is not None:
+                    try:
+                        meta, _ = parse(self._unpack(snapshot).decode('utf-8'))
+                    except (ValueError, UnicodeError):
+                        continue
+                    locations[meta['id']].add(item['path'].casefold())
 
         def conflict():
             self.db.execute("UPDATE memory_operations SET state='conflict' WHERE id=?", (oid,))
             raise ValueError('关联操作未完成：检测到外部编辑，整组停止并保留现场')
 
         def check():
+            # Absence at a creation path also matches its before snapshot. Check
+            # UUID locations so an external rename/copy is not mistaken for an
+            # unwritten file and recreated at the old name during recovery.
+            for path, raw in self._files().items():
+                if raw is None:
+                    continue
+                try:
+                    meta, _ = parse(raw.decode('utf-8'))
+                except (ValueError, UnicodeError):
+                    continue
+                allowed = locations.get(meta['id'])
+                if allowed is not None and path.casefold() not in allowed:
+                    conflict()
             for item in plan:
                 try:
                     raw = self._raw(item['path'])
@@ -302,6 +326,7 @@ class NoteStore:
                 else:
                     atomic_write(target, after.decode('utf-8'))
             self._checkpoint('replaced', oid, index)
+        check()
         for item in plan:
             if self._raw(item['path']) != self._unpack(item['after']):
                 conflict()

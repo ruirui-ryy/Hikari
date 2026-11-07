@@ -322,3 +322,73 @@ def test_failed_repair_can_be_retried_without_leaving_parent_quarantined(store, 
     assert not other.db.rows("SELECT id FROM memory_operations WHERE state IN ('pending','conflict')")
     assert all(r['repaired_by'] == resolved for r in other.db.rows("SELECT repaired_by FROM memory_operations WHERE state='repaired'"))
     assert all(other.read(mid)['available'] for mid in [a, b])
+
+
+@pytest.mark.parametrize('manual_edit', [False, True])
+def test_interrupted_creation_renamed_before_restart_is_conflict(store, monkeypatch, manual_edit):
+    text = note('中断的新记忆')
+    meta, _ = parse(text)
+    original = store.root / filename(meta)
+    renamed = store.root / '手工改名.md'
+    def stop(stage, oid, index=None):
+        if stage == 'replaced' and index == 0:
+            raise RuntimeError('synthetic crash after creation')
+    monkeypatch.setattr(store, '_checkpoint', stop)
+    with pytest.raises(RuntimeError):
+        store.add(text)
+    original.rename(renamed)
+    if manual_edit:
+        renamed.write_bytes(renamed.read_bytes() + '\n手工补充必须保留\n'.encode('utf-8'))
+    saved = renamed.read_bytes()
+    other = NoteStore(store.cfg, store.db, store.library)
+    other.recover()
+    other.recover()
+    assert not original.exists()
+    assert renamed.read_bytes() == saved
+    assert len(list(store.root.glob('*.md'))) == 1
+    op = store.db.one("SELECT * FROM memory_operations WHERE state='conflict'")
+    assert op and not store.db.rows("SELECT id FROM memory_operations WHERE state='applied'")
+    assert not other.read(meta['id'])['available']
+    with pytest.raises(ValueError, match='不可提供'):
+        other.read(meta['id'], for_ai=True)
+    # Explicitly accept the renamed current file without reconstructing the old path.
+    other.apply({original.name: None, renamed.name: saved.decode('utf-8')},
+                {original.name: None, renamed.name: digest(saved)}, repairs=op['id'])
+    assert other.read(meta['id'], for_ai=True)['path'] == renamed.name
+    assert renamed.read_bytes() == saved and not original.exists()
+
+
+def test_recovery_allows_rename_explicitly_in_original_plan(store, monkeypatch):
+    mid = add(store)
+    row = store.read(mid)
+    def stop(stage, oid, index=None):
+        if stage == 'replaced' and index == 0:
+            raise RuntimeError('stop after writing rename destination')
+    monkeypatch.setattr(store, '_checkpoint', stop)
+    with pytest.raises(RuntimeError):
+        store.apply({'计划内新名称.md': row['content'], row['path']: None},
+                    {'计划内新名称.md': None, row['path']: row['hash']})
+    assert len(list(store.root.glob('*.md'))) == 2
+    other = NoteStore(store.cfg, store.db, store.library)
+    other.recover()
+    other.recover()
+    assert other.read(mid, for_ai=True)['path'] == '计划内新名称.md'
+    assert len(list(store.root.glob('*.md'))) == 1
+    assert not other.db.rows("SELECT id FROM memory_operations WHERE state IN ('pending','conflict')")
+
+
+def test_external_copy_during_pending_creation_is_not_reported_successful(store, monkeypatch):
+    text = note('中断后复制')
+    def stop(stage, oid, index=None):
+        if stage == 'replaced':
+            raise RuntimeError('stop after creation')
+    monkeypatch.setattr(store, '_checkpoint', stop)
+    with pytest.raises(RuntimeError):
+        store.add(text)
+    (store.root / '手工副本.md').write_text(text, encoding='utf-8')
+    saved = {p.name: p.read_bytes() for p in store.root.glob('*.md')}
+    other = NoteStore(store.cfg, store.db, store.library)
+    other.recover()
+    assert saved == {p.name: p.read_bytes() for p in store.root.glob('*.md')}
+    assert other.db.one('SELECT state FROM memory_operations')['state'] == 'conflict'
+    assert all(not r['available'] for r in other.scan())
