@@ -6,6 +6,7 @@ import threading
 import time
 
 from .core import atomic_write, digest, uid, within
+from .notes import NoteStore
 
 
 class Memory:
@@ -13,6 +14,7 @@ class Memory:
         self.cfg, self.db, self.library = cfg, db, library
         self.root = cfg.home / 'memory'
         self.lock = threading.RLock()
+        self.notes = NoteStore(cfg, db, library, self.lock)
 
     def context(self, query, budget=16000):
         """Prefer relevant personal memories over an arbitrary alphabetical prefix."""
@@ -92,7 +94,11 @@ class Memory:
 
     def reconcile(self):
         with self.lock:
+            self.notes.recover()
             for revision in self.db.rows("SELECT r.*,m.path FROM revisions r JOIN memories m ON r.memory=m.id WHERE r.state='pending'"):
+                if not re.fullmatch(r'(profile|learning|understanding)/[^/\\]+\.md', revision['path']):
+                    self.db.execute("UPDATE revisions SET state='conflict' WHERE id=?", (revision['id'],))
+                    continue
                 path = within(self.root, revision['path'])
                 text = path.read_text('utf-8') if path.exists() else None
                 if text == revision['after_text']:
@@ -109,6 +115,10 @@ class Memory:
             # Handwritten Markdown files are imported as user-protected memories.
             for path in self.root.rglob('*.md'):
                 rel = path.relative_to(self.root).as_posix()
+                # Version 1 notes have their own authority, conflict isolation and journal.
+                # Never import them into legacy context, editing, deletion or undo paths.
+                if not re.fullmatch(r'(profile|learning|understanding)/[^/\\]+\.md', rel):
+                    continue
                 if not self.db.one('SELECT id FROM memories WHERE path=?', (rel,)):
                     try:
                         text = within(self.root, rel).read_text('utf-8')
@@ -118,6 +128,8 @@ class Memory:
                         pass
             result = []
             for row in self.db.rows('SELECT * FROM memories ORDER BY path'):
+                if not re.fullmatch(r'(profile|learning|understanding)/[^/\\]+\.md', row['path']):
+                    continue
                 try:
                     path = within(self.root, row['path'])
                     text = path.read_text('utf-8') if path.exists() else None
@@ -184,6 +196,8 @@ class Memory:
             if self.db.one("SELECT id FROM revisions WHERE memory=? AND created>? AND state='applied'", (rev['memory'], rev['created'])):
                 raise ValueError('已有后续修订，不能覆盖')
             target = within(self.root, rev['path'])
+            if not re.fullmatch(r'(profile|learning|understanding)/[^/\\]+\.md', rev['path']):
+                raise ValueError('此记忆不支持旧版撤销')
             if not target.exists() or target.read_text('utf-8') != rev['after_text']:
                 raise ValueError('内容已有外部修改，不能覆盖')
             # Undo itself is a journalled revision; empty new files remain protected tombstones.

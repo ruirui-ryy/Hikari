@@ -78,6 +78,8 @@ def validate(meta):
             raise ValueError('来源 type 必须为 chat/document/manual')
         fields = {'chat': ['conversation_id', 'message_id', 'excerpt'],
                   'document': ['doc', 'version', 'position', 'excerpt'], 'manual': ['description']}[source['type']]
+        if set(source) != {'type', *fields}:
+            raise ValueError('来源字段缺失或包含未知字段')
         for field in fields:
             if field == 'position' and isinstance(source.get(field), int) and source[field] > 0:
                 continue
@@ -105,6 +107,11 @@ def parse(text):
         raise ValueError('缺少 YAML frontmatter 分隔符')
     try:
         meta = yaml.load(parts[1], Loader=StrictLoader)
+        node = yaml.compose(parts[1], Loader=StrictLoader)
+        if isinstance(node, yaml.MappingNode):
+            for key, value in node.value:
+                if key.value in {'valid_from', 'valid_until'} and (not isinstance(value, yaml.ScalarNode) or value.style not in {'"', "'"}):
+                    raise ValueError('valid_from/valid_until 必须使用引号包裹文本')
     except (yaml.YAMLError, RecursionError):
         raise ValueError('YAML 格式错误') from None
     return validate(meta), parts[2].lstrip('\r\n')

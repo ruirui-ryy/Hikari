@@ -33,6 +33,8 @@ python -m pip --python local/venv install -r requirements.lock.txt
 
 ## 资料与记忆
 
+2026-11-07 新格式位于 `data/memory/notes/`，文件包含稳定 UUID 和双向关系。首层仅提供本地 Markdown 与存储接口，尚不显示在旧记忆网页，也不进入旧 AI 自动加载/提取。异常文件保留并局部隔离；conflict 操作重启不自动重试，须显式提交基于当前整组内容的修复。无新格式主动撤销入口，完整恢复须同时备份 Markdown 与数据库操作账本。格式、接口和兼容边界见 [MEMORY_STORAGE.md](MEMORY_STORAGE.md)。下文旧文件保护与撤销说明只适用于旧格式。
+
 默认原件位于 `data/knowledge/`，可以放课程子目录。上传后或主机修改文件后，后台每约 15 秒检查更新；首次大批导入期间可在资料库查看状态。
 
 不支持的扩展名不索引；PDF/PPTX 可能缺少图片和公式。单文件默认上限 100 MB；Office 解压内容上限 512 MB。解析错误可通过“检查更新”安排重试。

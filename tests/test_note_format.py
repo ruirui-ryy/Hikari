@@ -51,3 +51,9 @@ def test_bad_yaml_duplicate_keys_missing_fields_and_source_identity():
     meta['sources'][0].pop('excerpt')
     with pytest.raises(ValueError):
         render(meta, body)
+
+
+def test_partial_dates_must_be_quoted():
+    text = sample(valid_from='2026-04')
+    with pytest.raises(ValueError, match='引号'):
+        parse(text.replace('"2026-04"', '2026-04'))
