@@ -1,6 +1,6 @@
 # 长期记忆第一层：Markdown 存储与关系
 
-2026-11-07。本文记录本轮访谈后的最终决定，优先于旧架构中的状态字段、主动撤销与整文件永久保护要求。实现为 `hikari/note_format.py`、`hikari/notes.py`；入口是 `Memory.notes`（`NoteStore`），本层无 HTTP/UI 或主 AI 工具接入，无模型调用。
+2026-11-07。本文记录本轮访谈后的最终决定，优先于旧架构中的状态字段、主动撤销与整文件永久保护要求。实现为 `hikari/note_format.py`、`hikari/notes.py`；入口是 `Memory.notes`（`NoteStore`），存储层自身无模型调用。第二层现已提供独立 HTTP/UI 读取与检索，见 [MEMORY_RETRIEVAL.md](MEMORY_RETRIEVAL.md)；尚未接入主 AI 工具。
 
 ## 文件与字段
 
@@ -94,6 +94,6 @@ relations:
 
 ## 兼容范围与验收
 
-旧 `profile/learning/understanding` API、自动提取、修订和撤销仅为既有功能兼容保留，仍是旧格式；它们不识别、不导入、不修改 notes/，数据库中误入 notes/ 的旧修订也不能恢复或撤销新数据。邮件独立撤销不变。本层新格式不进入旧 context、memories 工具或闲置整理的整库输入；新的按需读取和写入工具留后续层接入。当前记忆网页仍只显示旧格式，notes/ 通过本地编辑器和存储接口验收，尚无专门冲突界面。
+旧 `profile/learning/understanding` API、自动提取、修订和撤销仅为既有功能兼容保留，仍是旧格式；它们不识别、不导入、不修改 notes/，数据库中误入 notes/ 的旧修订也不能恢复或撤销新数据。邮件独立撤销不变。本层新格式不进入旧 context、memories 工具或闲置整理的整库输入；主 AI 的按需读取和写入工具留后续层接入。第二层在长期记忆网页新增独立检索和只读查看，旧版编辑仍单列；尚无专门冲突修复界面。第一层用户网页/手机验收仍待完成。
 
 `tests/test_note_format.py` 和 `tests/test_notes.py` 用虚构内容验证字段、稳定身份改名、取代与纠正双向边、有效日期精度、分叉、循环、来源丢失、性质、索引重建、各阶段故障、幂等恢复、手改冲突、冲突不重试、显式修复、坏文件局部隔离及旧入口排除。测试不是实际模型记忆质量、真实资料来源核验或手机验收，不覆盖检索、Embedding、图谱、整理判断与主 AI 两工具。

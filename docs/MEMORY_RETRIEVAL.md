@@ -16,7 +16,7 @@
 
 采用 fastembed **0.7.4**、ONNX Runtime **1.31.1**，`BAAI/bge-small-zh-v1.5`，CPUExecutionProvider、2 线程、512 维；未引入第二个 Agent。准备脚本只下载公共模型资产，不上传记忆；正常搜索用 specific_model_path + local_files_only，不联网下载，缺失时显式失败，关键词仍可用，不静默降级模式。
 
-实际读取并核验的上游依据：[FastEmbed 模型注册实现](https://github.com/qdrant/fastembed/blob/v0.7.4/fastembed/text/onnx_embedding.py)、[本地加载实现](https://github.com/qdrant/fastembed/blob/v0.7.4/fastembed/text/text_embedding.py)。本机下载清单固定仓库 `Qdrant/bge-small-zh-v1.5` 的 revision **46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59**；ONNX SHA-256 **1294ea4b6331115a353d81f96b85e8c8d7fdcc284453d5b2fab5b016230aad38**。完整清单位于 local/embedding/bge-small-zh-v1.5/manifest.json，准备脚本记录实际下载版本，不把 main 当作不可变版本。
+实际读取并核验的上游依据为本机已安装 **0.7.4** 包中的模型注册和 TextEmbedding 实现，对应 [模型注册源文件](https://github.com/qdrant/fastembed/blob/v0.7.4/fastembed/text/onnx_embedding.py)、[加载源文件](https://github.com/qdrant/fastembed/blob/v0.7.4/fastembed/text/text_embedding.py)。本机下载清单固定仓库 `Qdrant/bge-small-zh-v1.5` 的 revision **46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59**；ONNX SHA-256 **1294ea4b6331115a353d81f96b85e8c8d7fdcc284453d5b2fab5b016230aad38**。完整清单位于 local/embedding/bge-small-zh-v1.5/manifest.json；准备脚本固定此 revision，加载时检查 revision 和文件哈希，不把 main 当作不可变版本。中文分词缓存也固定在 local/jieba-cache/。
 
 在本机 Windows / Python 3.13.11 上，12 条合成记录、top-3、7 个固定查询的单次实测（非 N100/N150）：模型文件约 **90.8 MiB**；下载缓存另保留一份，Python 依赖还需磁盘空间。模型载入 **0.91 秒**，建向量加首次语义查询 **0.092 秒**。进程 RSS 从 **29.7 MiB** 到载入后 **187.0 MiB**、建索引后 **190.1 MiB**，进程历史峰值工作集 **254.6 MiB**；整次测量 CPU 时间 **3.05 秒**。12 条的 SQLite 向量缓存 **156 KiB**（JSON 浮点存储，最小版本并非紧凑二进制）。每次语义查询编码一次问题，新增/变更记录重新编码片段，未变记录复用；关键词不调用模型。数据扩大时全文扫描、关键词计算和全向量遍历成本随库增长，暂未做大规模优化。
 
@@ -43,6 +43,10 @@
 ## 验证与人工入口
 
 开发检查包括 tests/test_note_retrieval.py 的接口/登录/显式模式、正文一致、关系时间、改名复用、手改与模型版本失效、删除和异常隔离、模型不可用不降级、长正文分段，以及第一层格式与故障回归。FakeEmbedding 仅用于接口测试；上面的对比另用了真实本地编码器。网页与真机验收单独记录，不用合成测试替代。
+
+最终开发检查：**149 项 Python、27 项 Node 检查通过**，PowerShell 脚本编码/语法检查通过。第一次全量运行 148 通过、既有 `test_single_worker_queue_and_reconnect` 出现一次任务/消息快照时序不一致；单项复查及最终全量均通过，未在本层改写队列逻辑，保留该偶发风险记录。Windows 受限执行环境的 TestClient 事件循环曾卡在 socketpair；获准在本机运行后完成检查。
+
+实际浏览器使用同一 FastAPI 和网页、合成数据，已验证关键词搜索、本地语义搜索、混合搜索、打开三月正文并沿关系跳至四月、打开推测及两条依据。最新页面阅读过程中关闭/切换后晚返回不会重开旧内容，并有脚本测试。浏览器截图捕获不可用，本轮未生成视觉截图证据；没有据此宣告移动宽度或手机验收通过。
 
 主机准备与隔离验收：
 

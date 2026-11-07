@@ -9,9 +9,11 @@ from pathlib import Path
 
 import jieba
 
-from .core import digest, uid, within
+from .core import ROOT, digest, uid, within
 
 jieba.setLogLevel(logging.ERROR)
+jieba.dt.tmp_dir = str(ROOT / 'local' / 'jieba-cache')
+Path(jieba.dt.tmp_dir).mkdir(parents=True, exist_ok=True)
 SUPPORTED = {'.pdf', '.pptx', '.md', '.docx'}
 
 

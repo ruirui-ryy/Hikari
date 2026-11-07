@@ -11,6 +11,7 @@ from .core import ROOT, digest
 from .library import tokens
 
 MODEL = 'BAAI/bge-small-zh-v1.5'
+MODEL_REVISION = '46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59'
 MODEL_DIR = ROOT / 'local' / 'embedding' / 'bge-small-zh-v1.5'
 PIPELINE = 'title80-body300-overlap60-v1'
 
@@ -33,7 +34,7 @@ class LocalEmbedding:
             try:
                 from fastembed import TextEmbedding
                 manifest = json.loads((MODEL_DIR / 'manifest.json').read_text('utf-8'))
-                if manifest['model'] != MODEL:
+                if manifest['model'] != MODEL or manifest['revision'] != MODEL_REVISION:
                     raise ValueError('wrong model')
                 # Verify the exact downloaded artifacts before reusing vector caches.
                 for name, expected in manifest['files'].items():

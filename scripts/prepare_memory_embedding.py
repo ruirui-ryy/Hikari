@@ -7,14 +7,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from hikari.core import ROOT, digest, atomic_write
-from hikari.note_retrieval import MODEL, MODEL_DIR
+from hikari.note_retrieval import MODEL, MODEL_DIR, MODEL_REVISION
 
 
 def prepare():
     os.environ['HF_HOME'] = str(ROOT / 'local' / 'huggingface')
-    from huggingface_hub import HfApi, snapshot_download
+    from huggingface_hub import snapshot_download
     repo = 'Qdrant/bge-small-zh-v1.5'
-    revision = HfApi().model_info(repo).sha
+    revision = MODEL_REVISION
     path = Path(snapshot_download(repo, revision=revision,
                 cache_dir=str(ROOT / 'local' / 'huggingface'),
                 allow_patterns=['model_optimized.onnx', 'tokenizer.json', 'config.json',

@@ -232,6 +232,7 @@ dialog{padding:19px}
 #email-list .document button{text-align:left;white-space:normal;overflow-wrap:anywhere}
 #email-filter{margin:12px;width:260px;max-width:100%}
 
+#note-search,#note-open{display:flex;flex-wrap:wrap;align-items:end;gap:12px}#note-search label,#note-open label{flex:1;min-width:160px}#note-search input,#note-search select,#note-open input{width:100%}#note-results small,.note-relations button{overflow-wrap:anywhere;white-space:normal}#note-results .quiet{text-align:left;font-size:inherit}#modal-content details pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto}
 /* Full Markdown reading keeps tables and code scrollable on phones. */
 dialog.markdown-reader{max-width:900px}dialog.markdown-reader .modal-head h2{font-size:17px;min-width:0}dialog.markdown-reader .modal-head button{flex-shrink:0}.document-path{font-size:12px;overflow-wrap:anywhere}.markdown-document{line-height:1.85;overflow-wrap:anywhere;padding-top:14px}.markdown-document pre{white-space:pre;word-break:normal;overflow:auto}.markdown-document pre code{padding:0}.markdown-document h1{font-size:1.65em}.markdown-document h2{font-size:1.35em}.markdown-document h3{font-size:1.15em}@media(max-width:600px){dialog.markdown-reader{width:calc(100% - 16px);max-height:92dvh;padding:16px}.markdown-document{font-size:15px}}
 

@@ -33,7 +33,7 @@ python -m pip --python local/venv install -r requirements.lock.txt
 
 ## 资料与记忆
 
-2026-11-07 新格式位于 `data/memory/notes/`，文件包含稳定 UUID 和双向关系。首层仅提供本地 Markdown 与存储接口，尚不显示在旧记忆网页，也不进入旧 AI 自动加载/提取。异常文件保留并局部隔离；conflict 操作重启不自动重试，须显式提交基于当前整组内容的修复。无新格式主动撤销入口，完整恢复须同时备份 Markdown 与数据库操作账本。格式、接口和兼容边界见 [MEMORY_STORAGE.md](MEMORY_STORAGE.md)。下文旧文件保护与撤销说明只适用于旧格式。
+2026-11-07 新格式位于 `data/memory/notes/`，文件包含稳定 UUID 和双向关系。长期记忆页现在提供关键词、本地语义、混合检索、按 UUID 读正文与关联跳转；仍不进入旧 AI 自动加载/提取。语义模型先在主机运行 `.\local\venv\Scripts\python.exe scripts/prepare_memory_embedding.py` 准备，搜索期间不下载、不上传记忆。隔离网页验收可运行 `scripts/preview_memory.py` 后打开本机 8767 端口，具体账户、步骤、资源实测与验收边界见 [MEMORY_RETRIEVAL.md](MEMORY_RETRIEVAL.md)。异常文件保留并局部隔离；conflict 操作重启不自动重试，须显式提交基于当前整组内容的修复。无新格式主动撤销或网页冲突修复入口，完整恢复须同时备份 Markdown 与数据库操作账本。格式、接口和兼容边界见 [MEMORY_STORAGE.md](MEMORY_STORAGE.md)。下文旧文件保护与撤销说明只适用于旧格式。
 
 默认原件位于 `data/knowledge/`，可以放课程子目录。上传后或主机修改文件后，后台每约 15 秒检查更新；首次大批导入期间可在资料库查看状态。
 
